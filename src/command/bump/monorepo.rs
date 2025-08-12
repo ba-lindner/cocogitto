@@ -144,10 +144,13 @@ impl CocoGitto {
             .max();
 
         // Get current global tag
-        let old = self
-            .repository
-            .get_latest_tag(TagLookUpOptions::default().include_pre_release());
+        let old = self.repository.get_latest_tag(TagLookUpOptions::default());
         let old = tag_or_fallback_to_zero(old)?;
+        let pre_release_tag = self
+            .repository
+            .get_latest_tag(TagLookUpOptions::default().include_pre_release())
+            .ok()
+            .filter(|tag| *tag > old);
         let mut tag = if SETTINGS.generate_mono_repository_package_tags {
             old.bump(
                 IncrementCommand::AutoMonoRepoGlobal(increment_from_package_bumps),
@@ -158,6 +161,14 @@ impl CocoGitto {
         };
 
         ensure_tag_is_greater_than_previous(&old, &tag)?;
+
+        if let Some(pre_release_tag) = pre_release_tag {
+            if tag < pre_release_tag {
+                tag.version.major = pre_release_tag.version.major;
+                tag.version.minor = pre_release_tag.version.minor;
+                tag.version.patch = pre_release_tag.version.patch;
+            }
+        }
 
         if let Some(pre_release) = opts.pre_release {
             tag.version.pre = Prerelease::new(pre_release)?;
@@ -456,6 +467,11 @@ impl CocoGitto {
         for (package_name, package) in packages {
             let old = self.repository.get_latest_package_tag(package_name);
             let old = tag_or_fallback_to_zero(old)?;
+            let pre_release_tag = self
+                .repository
+                .get_latest_tag(TagLookUpOptions::package(package_name).include_pre_release())
+                .ok()
+                .filter(|tag| *tag > old);
 
             let next_version = old.bump(
                 IncrementCommand::AutoPackage(package_name.to_string()),
@@ -470,6 +486,14 @@ impl CocoGitto {
 
             if next_version == old {
                 continue;
+            }
+
+            if let Some(pre_release_tag) = pre_release_tag {
+                if next_version < pre_release_tag {
+                    next_version.version.major = pre_release_tag.version.major;
+                    next_version.version.minor = pre_release_tag.version.minor;
+                    next_version.version.patch = pre_release_tag.version.patch;
+                }
             }
 
             if let Some(pre_release) = pre_release {

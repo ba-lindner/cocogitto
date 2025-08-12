@@ -4,7 +4,7 @@ use crate::command::bump::{
 };
 use crate::conventional::changelog::template::PackageContext;
 use crate::conventional::changelog::ReleaseType;
-use crate::git::tag::Tag;
+use crate::git::tag::{Tag, TagLookUpOptions};
 use crate::hook::HookVersion;
 use crate::{CocoGitto, SETTINGS};
 use anyhow::Result;
@@ -17,8 +17,15 @@ impl CocoGitto {
     pub fn create_package_version(&mut self, opts: PackageBumpOptions) -> Result<()> {
         self.pre_bump_checks(opts.skip_untracked)?;
 
-        let current_tag = self.repository.get_latest_package_tag(opts.package_name);
+        let current_tag = self
+            .repository
+            .get_latest_tag(TagLookUpOptions::package(opts.package_name));
         let current_tag = tag_or_fallback_to_zero(current_tag)?;
+        let pre_release_tag = self
+            .repository
+            .get_latest_tag(TagLookUpOptions::package(opts.package_name).include_pre_release())
+            .ok()
+            .filter(|tag| *tag > current_tag);
         let mut next_version = current_tag.bump(opts.increment, &self.repository)?;
         if current_tag == next_version {
             print!("No conventional commits found for {} that required a bump. Changelog will be updated on the next bump.\nPre-Hooks and Post-Hooks have been skipped.\n",
@@ -28,6 +35,14 @@ impl CocoGitto {
         }
 
         ensure_tag_is_greater_than_previous(&current_tag, &next_version)?;
+
+        if let Some(pre_release_tag) = pre_release_tag {
+            if next_version < pre_release_tag {
+                next_version.version.major = pre_release_tag.version.major;
+                next_version.version.minor = pre_release_tag.version.minor;
+                next_version.version.patch = pre_release_tag.version.patch;
+            }
+        }
 
         if let Some(pre_release) = opts.pre_release {
             next_version.version.pre = Prerelease::new(pre_release)?;
