@@ -127,9 +127,9 @@ mod test {
         let commit_oid = commit("chore: v1")?;
         git_tag("1.0.0")?;
 
-        let oids = repo.resolve_oid_of("1.0.0", None)?;
+        let oid = repo.resolve_oid_of("1.0.0", None)?;
 
-        assert_that!(oids).is_equal_to(OidOf::Tag(Tag {
+        assert_that!(oid).is_equal_to(OidOf::Tag(Tag {
             package: None,
             prefix: None,
             version: Version::new(1, 0, 0),
