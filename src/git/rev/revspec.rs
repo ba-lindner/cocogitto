@@ -33,13 +33,13 @@ impl Repository {
             let from = if from.is_empty() {
                 OidOf::Other(self.get_first_commit()?)
             } else {
-                self.resolve_oid_of(from)?
+                self.resolve_oid_of(from, None)?
             };
 
             let to = if to.is_empty() {
                 OidOf::Head(self.get_head_commit_oid()?)
             } else {
-                self.resolve_oid_of(to)?
+                self.resolve_oid_of(to, None)?
             };
 
             Ok(RevSpecPattern2::Range { from, to })
@@ -53,30 +53,47 @@ impl Repository {
 
             Ok(RevSpecPattern2::AtTag {
                 from: previous,
-                to: self.resolve_oid_of(s)?,
+                to: self.resolve_oid_of(s, None)?,
             })
         } else {
             Err(Git2Error::InvalidCommitRangePattern(s.to_string()))
         }
     }
 
-    pub(super) fn resolve_oid_of(&self, from: &str) -> Result<OidOf, Git2Error> {
+    pub(super) fn resolve_oid_of(
+        &self,
+        from: &str,
+        package: Option<&str>,
+    ) -> Result<OidOf, Git2Error> {
         let cache = get_cache(self);
 
-        let oid = cache
+        // NOTE: `get` cannot be used as `starts_with` is required for comparison
+        let oids = cache
             .iter()
             .find(|(k, _)| k.starts_with(from))
             .map(|(_, v)| v);
 
-        match oid {
-            None => {
-                let object = self
-                    .0
-                    .revparse_single(from)
-                    .map_err(|_| Git2Error::UnknownRevision(from.to_string()))?;
-                Ok(OidOf::Other(object.id()))
-            }
-            Some(oid) => Ok(oid.clone()),
+        let oid = oids
+            .and_then(|v| {
+                v.iter()
+                    .filter(|oid| {
+                        if let OidOf::Tag(tag) = oid {
+                            tag.package.as_deref() == package
+                        } else {
+                            true
+                        }
+                    })
+                    .next_back()
+            })
+            .cloned();
+        if let Some(oid) = oid {
+            Ok(oid)
+        } else {
+            let object = self
+                .0
+                .revparse_single(from)
+                .map_err(|_| Git2Error::UnknownRevision(from.to_string()))?;
+            Ok(OidOf::Other(object.id()))
         }
     }
 }
@@ -110,9 +127,9 @@ mod test {
         let commit_oid = commit("chore: v1")?;
         git_tag("1.0.0")?;
 
-        let oid = repo.resolve_oid_of("1.0.0")?;
+        let oids = repo.resolve_oid_of("1.0.0", None)?;
 
-        assert_that!(oid).is_equal_to(OidOf::Tag(Tag {
+        assert_that!(oids).is_equal_to(OidOf::Tag(Tag {
             package: None,
             prefix: None,
             version: Version::new(1, 0, 0),
@@ -129,7 +146,7 @@ mod test {
         commit("chore: first commit")?;
         let commit_oid = commit("chore: other")?;
 
-        let oid = repo.resolve_oid_of(&commit_oid)?;
+        let oid = repo.resolve_oid_of(&commit_oid, None)?;
 
         assert_that!(oid).is_equal_to(OidOf::Head(Oid::from_str(&commit_oid)?));
 
@@ -143,7 +160,7 @@ mod test {
         let commit_oid = commit("chore: other")?;
         commit("chore: head")?;
 
-        let oid = repo.resolve_oid_of(&commit_oid)?;
+        let oid = repo.resolve_oid_of(&commit_oid, None)?;
 
         assert_that!(oid).is_equal_to(OidOf::Other(Oid::from_str(&commit_oid)?));
 
@@ -156,7 +173,7 @@ mod test {
         commit("chore: first commit")?;
         commit("chore: other")?;
 
-        let oid = repo.resolve_oid_of("v32");
+        let oid = repo.resolve_oid_of("v32", None);
 
         assert_that!(oid).is_err();
 
