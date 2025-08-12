@@ -145,9 +145,11 @@ impl Repository {
 
         Ok(repo_cache
             .values()
-            .filter_map(|oid| match oid {
-                OidOf::Tag(tag) if tag_filter(tag) => Some(tag),
-                _ => None,
+            .flat_map(|oids| {
+                oids.iter().filter_map(|oid| match oid {
+                    OidOf::Tag(tag) if tag_filter(tag) => Some(tag),
+                    _ => None,
+                })
             })
             .cloned()
             .collect())
