@@ -884,6 +884,77 @@ fn disable_commit_creation_package_ok() -> Result<()> {
 }
 
 #[sealed_test]
+fn bump_repeatedly() -> Result<()> {
+    // Arrange
+    git_init()?;
+    git_commit("feat: first commit")?;
+
+    // Act
+    Command::cargo_bin("cog")?
+        .arg("bump")
+        .arg("--auto")
+        .arg("--build")
+        .arg("test.1")
+        .assert()
+        .success();
+
+    run_cmd!(git reset --hard HEAD^)?;
+
+    Command::cargo_bin("cog")?
+        .arg("bump")
+        .arg("--auto")
+        .arg("--build")
+        .arg("test.2")
+        .assert()
+        .success();
+
+    run_cmd!(git reset --hard HEAD^)?;
+
+    Command::cargo_bin("cog")?
+        .arg("bump")
+        .arg("--auto")
+        .arg("--build")
+        .arg("test.3")
+        .assert()
+        .success();
+
+    // Assert
+    assert_tag_exists("0.1.0+test.1")?;
+    assert_tag_exists("0.1.0+test.2")?;
+    assert_tag_exists("0.1.0+test.3")?;
+
+    Ok(())
+}
+
+#[sealed_test]
+fn bump_bug_fix() -> Result<()> {
+    // Arrange
+    git_init()?;
+    git_commit("feat: first commit")?;
+    git_tag("1.0.0")?;
+    git_commit("feat: amazing stuff")?;
+    git_commit("feat!: break everything")?;
+    git_tag("2.0.0")?;
+    run_cmd!(
+        git branch bugfix 1.0.0;
+        git switch bugfix;
+    )?;
+    git_commit("fix: important bug fix")?;
+
+    // Act
+    Command::cargo_bin("cog")?
+        .arg("bump")
+        .arg("--auto")
+        .assert()
+        .success();
+
+    // Assert
+    assert_tag_exists("1.0.1")?;
+
+    Ok(())
+}
+
+#[sealed_test]
 fn bump_from_latest_pre_release() -> Result<()> {
     // Arrange
     git_init()?;

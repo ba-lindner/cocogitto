@@ -42,9 +42,6 @@ fn build_cache(
         .flatten()
         .filter_map(|tag| repo.resolve_tag(tag).ok());
     for tag in tags {
-        if let Some(target) = &tag.target {
-            add_entry(target.to_string(), OidOf::Tag(tag.clone()));
-        }
         if let Some(oid) = &tag.oid {
             add_entry(oid.to_string(), OidOf::Tag(tag.clone()));
         }
@@ -55,18 +52,33 @@ fn build_cache(
 }
 
 impl Repository {
-    fn resolve_tag(&self, tag: &str) -> Result<Tag, TagError> {
-        self.0
+    fn resolve_tag(&self, tag: &str) -> Result<Tag, Git2Error> {
+        let oid = self
+            .0
             .resolve_reference_from_short_name(tag)
-            .map_err(|err| TagError::not_found(tag, err))
-            .map(|reference| reference.target().unwrap())
-            .map(|commit_oid| {
-                if let Ok(annotated_tag) = self.0.find_tag(commit_oid) {
-                    Tag::from_str(tag, Some(commit_oid), Some(annotated_tag.target_id()))
-                } else {
-                    Tag::from_str(tag, Some(commit_oid), None)
-                }
-            })?
+            .map_err(|err| TagError::not_found(tag, err))?
+            .target()
+            .expect("tags should always be direct references");
+
+        let commit_oid = if let Ok(annotated_tag) = self.0.find_tag(oid) {
+            annotated_tag.target_id()
+        } else {
+            oid
+        };
+
+        // check if tag is reachable from HEAD
+        let head = self.get_head_commit_oid()?;
+        if head != commit_oid
+            && !self
+                .0
+                .graph_descendant_of(self.get_head_commit_oid()?, commit_oid)?
+        {
+            return Err(Git2Error::TagError(TagError::NotReachableFromHead {
+                tag: tag.to_string(),
+            }));
+        }
+
+        Tag::from_str(tag, Some(commit_oid)).map_err(Git2Error::TagError)
     }
 }
 
@@ -132,6 +144,25 @@ mod test {
 
         // Act
         let tag = repo.resolve_tag("the_taaaag");
+
+        // Assert
+        assert_that!(tag).is_err();
+        Ok(())
+    }
+
+    #[sealed_test]
+    fn dont_read_future_tag() -> anyhow::Result<()> {
+        // Arrange
+        let repo = git_init_no_gpg()?;
+        run_cmd!(
+            git commit --allow-empty -m "first commit";
+            git commit --allow-empty -m "second commit";
+            git tag 1.0.0;
+            git reset HEAD^
+        )?;
+
+        // Act
+        let tag = repo.resolve_tag("1.0.0");
 
         // Assert
         assert_that!(tag).is_err();
