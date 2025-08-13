@@ -52,6 +52,9 @@ pub enum TagError {
         pattern: Option<String>,
     },
     NoTag,
+    NotReachableFromHead {
+        tag: String,
+    },
 }
 
 impl StdError for TagError {}
@@ -185,6 +188,9 @@ impl Display for TagError {
                     Some(pattern) => writeln!(f, "no tag matching pattern {pattern}")?,
                 }
                 writeln!(f, "\tcause: {err}")
+            }
+            TagError::NotReachableFromHead { tag } => {
+                writeln!(f, "tag {tag} is not reachable from HEAD")
             }
         }
     }
