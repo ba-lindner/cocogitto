@@ -84,8 +84,10 @@ impl Repository {
 
     /// Get the latest tag, will ignore package tag if on a monorepo
     pub(crate) fn get_latest_tag(&self, options: TagLookUpOptions) -> Result<Tag, TagError> {
-        let tags: Vec<Tag> = self.tag_lookup(options)?;
-        tags.into_iter().max().ok_or(TagError::NoTag)
+        self.tag_lookup(options)
+            .into_iter()
+            .max()
+            .ok_or(TagError::NoTag)
     }
 
     pub(crate) fn get_previous_tag(&self, current: &Tag) -> Result<Option<Tag>, TagError> {
@@ -99,7 +101,7 @@ impl Repository {
         }
 
         let mut tags: Vec<Tag> = self
-            .tag_lookup(options)?
+            .tag_lookup(options)
             .into_iter()
             .filter(|tag| tag.package == current.package)
             .collect();
@@ -127,7 +129,7 @@ impl Repository {
             .map(|tag| tag.oid_unchecked().to_owned())
     }
 
-    pub fn tag_lookup(&self, option: TagLookUpOptions) -> Result<Vec<Tag>, TagError> {
+    pub fn tag_lookup(&self, option: TagLookUpOptions) -> Vec<Tag> {
         let prefix = SETTINGS.tag_prefix.as_ref();
         let repo_cache = crate::git::rev::cache::get_cache(self);
         let include_pre_release = option.include_pre_release;
@@ -143,14 +145,14 @@ impl Repository {
                 }
         };
 
-        Ok(repo_cache
+        repo_cache
             .values()
             .filter_map(|oid| match oid {
                 OidOf::Tag(tag) if tag_filter(tag) => Some(tag),
                 _ => None,
             })
             .cloned()
-            .collect())
+            .collect()
     }
 }
 
@@ -356,7 +358,7 @@ mod test {
         git_tag("v0.2.0")?;
         git_tag("v0.0.1")?;
 
-        let result = repository.tag_lookup(TagLookUpOptions::default())?;
+        let result = repository.tag_lookup(TagLookUpOptions::default());
 
         let tags: Vec<_> = result.into_iter().map(|tag| tag.to_string()).collect();
 
