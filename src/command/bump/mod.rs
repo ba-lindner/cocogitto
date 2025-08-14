@@ -84,6 +84,10 @@ impl<'a> BumpOptions<'a> {
             Err(TagError::NoTag) => Tag::default(),
             Err(other) => bail!(other),
         };
+        let current_prerelease = repository
+            .get_latest_tag(tag_opts.include_pre_release())
+            .ok()
+            .filter(|tag| *tag > current);
 
         let increment = increment.unwrap_or_else(|| self.increment.clone());
         let (mut next, had_commits) = match current.bump(increment, repository) {
@@ -91,6 +95,15 @@ impl<'a> BumpOptions<'a> {
             Err(ConvBumpError::NoCommitFound) if allow_empty => (current.strip_metadata(), false),
             Err(other) => bail!(other),
         };
+
+        // if prerelease exists, ensure the new tag is not smaller
+        if let Some(pre_release) = &current_prerelease {
+            if next < *pre_release {
+                next.version.major = pre_release.version.major;
+                next.version.minor = pre_release.version.minor;
+                next.version.patch = pre_release.version.patch;
+            }
+        }
 
         if let Some(pre_release) = self.pre_release {
             next.version.pre = Prerelease::new(pre_release)?;
