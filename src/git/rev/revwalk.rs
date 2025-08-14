@@ -163,7 +163,7 @@ mod test {
     use crate::conventional::changelog::release::Release;
     use crate::git::oid::OidOf;
     use crate::git::repository::Repository;
-    use crate::git::tag::{Tag, TagLookUpOptions};
+    use crate::git::tag::Tag;
     use crate::settings::{MonoRepoPackage, Settings};
     use crate::test_helpers::{commit, git_init_no_gpg, git_tag};
 
@@ -521,7 +521,7 @@ mod test {
         let repo = Repository::open(COCOGITTO_REPOSITORY)?;
         let head = repo.get_head_commit_oid()?;
         let head = OidOf::Head(head);
-        let tag = repo.get_latest_tag(TagLookUpOptions::default())?;
+        let tag = repo.get_latest_tag(None, false)?;
 
         // Cover the case when we release a version and run the test in the CI right after that
         let head = if tag.oid() == Some(head.oid()) {
@@ -570,7 +570,7 @@ mod test {
         let repo = Repository::open(COCOGITTO_REPOSITORY)?;
         let mut tag_count = repo.0.tag_names(None)?.len();
         let head = repo.get_head_commit_oid()?;
-        let latest = repo.get_latest_tag(TagLookUpOptions::default())?;
+        let latest = repo.get_latest_tag(None, false)?;
         let latest = latest.oid();
         if latest == Some(&head) {
             tag_count -= 1;

@@ -4,7 +4,6 @@ use semver::{BuildMetadata, Prerelease, Version};
 
 use crate::conventional::error::BumpError;
 use crate::conventional::version::Increment;
-use crate::git::tag::TagLookUpOptions;
 use crate::{Commit, IncrementCommand, Repository, Tag, SETTINGS};
 
 static FILTER_MERGE_COMMITS: Lazy<fn(&&git2::Commit) -> bool> = Lazy::new(|| {
@@ -154,8 +153,9 @@ impl Tag {
 
     fn get_version_from_commit_history(&self, repository: &Repository) -> Result<Tag, BumpError> {
         let changelog_start_oid = repository
-            .get_latest_tag_oid(TagLookUpOptions::default())
+            .get_latest_tag(None, false)
             .ok()
+            .and_then(|tag| tag.oid)
             .unwrap_or_else(|| repository.get_first_commit().expect("non empty repository"));
 
         let commits = repository.revwalk(&format!("{changelog_start_oid}.."))?;
@@ -188,7 +188,7 @@ impl Tag {
         repository: &Repository,
     ) -> Result<Tag, BumpError> {
         let changelog_start_oid = repository
-            .get_latest_package_tag(package)
+            .get_latest_tag(Some(package), false)
             .ok()
             .and_then(|tag| tag.oid)
             .unwrap_or_else(|| repository.get_first_commit().expect("non empty repository"));
@@ -222,8 +222,9 @@ impl Tag {
         repository: &Repository,
     ) -> Result<Tag, BumpError> {
         let changelog_start_oid = repository
-            .get_latest_tag_oid(TagLookUpOptions::default())
+            .get_latest_tag(None, false)
             .ok()
+            .and_then(|tag| tag.oid)
             .unwrap_or_else(|| repository.get_first_commit().expect("non empty repository"));
 
         let commits =

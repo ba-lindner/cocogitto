@@ -1,6 +1,5 @@
 use crate::conventional::commit::{verify, Commit};
 
-use crate::git::tag::TagLookUpOptions;
 use crate::{CocoGitto, SETTINGS};
 use anyhow::{anyhow, Result};
 use colored::*;
@@ -14,9 +13,7 @@ use tempfile::TempDir;
 impl CocoGitto {
     pub fn check_and_edit(&self, from_latest_tag: bool) -> Result<()> {
         let commits = if from_latest_tag {
-            let tag = self
-                .repository
-                .get_latest_tag(TagLookUpOptions::default())?;
+            let tag = self.repository.get_latest_tag(None, false)?;
             self.repository.revwalk(&format!("{tag}.."))?
         } else {
             self.repository.revwalk("..")?

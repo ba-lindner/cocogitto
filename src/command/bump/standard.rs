@@ -1,52 +1,28 @@
-use crate::command::bump::{
-    ensure_tag_is_greater_than_previous, tag_or_fallback_to_zero, BumpOptions, HookRunOptions,
-};
+use crate::command::bump::{ensure_tag_is_greater_than_previous, BumpOptions, HookRunOptions};
 
 use crate::conventional::changelog::ReleaseType;
 
-use crate::git::tag::{Tag, TagLookUpOptions};
+use crate::git::tag::Tag;
 use crate::hook::HookVersion;
 use crate::{settings, CocoGitto, SETTINGS};
 use anyhow::Result;
 use colored::*;
 use log::info;
-use semver::{BuildMetadata, Prerelease};
 use tera::Tera;
 
 impl CocoGitto {
     pub fn create_version(&mut self, opts: BumpOptions) -> Result<()> {
         self.pre_bump_checks(opts.skip_untracked)?;
 
-        let current_tag = self.repository.get_latest_tag(TagLookUpOptions::default());
-        let current_tag = tag_or_fallback_to_zero(current_tag)?;
-        let pre_release_tag = self
-            .repository
-            .get_latest_tag(TagLookUpOptions::default().include_pre_release())
-            .ok()
-            .filter(|tag| *tag > current_tag);
-        let mut tag = current_tag.bump(opts.increment, &self.repository)?;
+        let (current_tag, tag) =
+            self.calculate_next_version(None, opts.increment, opts.pre_release, opts.build)?;
+
         if current_tag == tag {
             print!("No conventional commits for your repository that required a bump. Changelogs will be updated on the next bump.\nPre-Hooks and Post-Hooks have been skipped.\n");
             return Ok(());
         }
 
         ensure_tag_is_greater_than_previous(&current_tag, &tag)?;
-
-        if let Some(pre_release_tag) = pre_release_tag {
-            if tag < pre_release_tag {
-                tag.version.major = pre_release_tag.version.major;
-                tag.version.minor = pre_release_tag.version.minor;
-                tag.version.patch = pre_release_tag.version.patch;
-            }
-        }
-
-        if let Some(pre_release) = opts.pre_release {
-            tag.version.pre = Prerelease::new(pre_release)?;
-        }
-
-        if let Some(build) = opts.build {
-            tag.version.build = BuildMetadata::new(build)?;
-        }
 
         let tag = Tag::create(tag.version, None);
 
@@ -69,7 +45,7 @@ impl CocoGitto {
 
         let current = self
             .repository
-            .get_latest_tag(TagLookUpOptions::default())
+            .get_latest_tag(None, false)
             .map(HookVersion::new)
             .ok();
 

@@ -1,8 +1,8 @@
 use crate::conventional::changelog::release::Release;
 use crate::conventional::commit::Commit;
-use crate::git::error::TagError;
 use crate::git::oid::OidOf;
 
+use crate::conventional::error::BumpError as ConvBumpError;
 use crate::conventional::version::IncrementCommand;
 use crate::git::tag::Tag;
 use crate::hook::{Hook, HookVersion, Hooks};
@@ -10,12 +10,13 @@ use crate::settings::{HookType, MonoRepoPackage, Settings};
 use crate::BumpError;
 use crate::{CocoGitto, COMMITS_METADATA, SETTINGS};
 use anyhow::Result;
-use anyhow::{anyhow, bail, ensure, Context};
+use anyhow::{bail, ensure, Context};
 use colored::Colorize;
 use conventional_commit_parser::commit::CommitType;
 use globset::Glob;
 use itertools::Itertools;
 use log::{error, info, warn};
+use semver::{BuildMetadata, Prerelease};
 use std::default::Default;
 use std::fmt;
 use std::fmt::Write;
@@ -123,21 +124,15 @@ impl<'a> HookRunOptions<'a> {
 
 fn ensure_tag_is_greater_than_previous(current: &Tag, next: &Tag) -> Result<()> {
     if next < current {
-        let comparison = format!("{current} <= {next}").red();
-        let cause_key = "cause:".red();
-        let cause = format!("{cause_key} version MUST be greater than current one: {comparison}");
-        bail!("{}:\n\t{}\n", "SemVer Error".red().to_string(), cause);
+        bail!(
+            "{}:\n\t{} version MUST be greater than current one: {}\n",
+            "SemVer Error".red(),
+            "cause:".red(),
+            format!("{next} <= {current}").red(),
+        );
     };
 
     Ok(())
-}
-
-fn tag_or_fallback_to_zero(tag: Result<Tag, TagError>) -> Result<Tag> {
-    match tag {
-        Ok(ref tag) => Ok(tag.clone()),
-        Err(TagError::NoTag) => Ok(Tag::default()),
-        Err(err) => Err(anyhow!(err)),
-    }
 }
 
 impl CocoGitto {
@@ -345,6 +340,44 @@ impl CocoGitto {
         }
 
         Ok(())
+    }
+
+    fn calculate_next_version(
+        &self,
+        package: Option<&str>,
+        increment: IncrementCommand,
+        pre_release: Option<&str>,
+        build: Option<&str>,
+    ) -> Result<(Tag, Tag), ConvBumpError> {
+        let current = self
+            .repository
+            .get_latest_tag(package, false)
+            .unwrap_or_default();
+        let pre_release_tag = self
+            .repository
+            .get_latest_tag(package, true)
+            .ok()
+            .filter(|tag| *tag > current);
+
+        let mut next_version = current.bump(increment, &self.repository)?;
+
+        if let Some(pre_release_tag) = pre_release_tag {
+            if next_version < pre_release_tag {
+                next_version.version.major = pre_release_tag.version.major;
+                next_version.version.minor = pre_release_tag.version.minor;
+                next_version.version.patch = pre_release_tag.version.patch;
+            }
+        }
+
+        if let Some(pre_release) = pre_release {
+            next_version.version.pre = Prerelease::new(pre_release)?;
+        }
+
+        if let Some(build) = build {
+            next_version.version.build = BuildMetadata::new(build)?;
+        }
+
+        Ok((current, next_version))
     }
 }
 
