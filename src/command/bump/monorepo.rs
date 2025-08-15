@@ -508,7 +508,7 @@ impl CocoGitto {
             );
 
             self.repository.add_all()?;
-            self.unwrap_or_stash_and_exit(&tag, hook_result);
+            self.unwrap_or_stash_and_exit(tag, hook_result);
         }
 
         Ok(())

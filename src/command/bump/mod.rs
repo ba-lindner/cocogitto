@@ -92,7 +92,9 @@ impl<'a> BumpOptions<'a> {
         let increment = increment.unwrap_or_else(|| self.increment.clone());
         let (mut next, had_commits) = match current.bump(increment, repository) {
             Ok(tag) => (tag, true),
-            Err(ConvBumpError::NoCommitFound) if allow_empty => (current.strip_metadata(), false),
+            Err(ConvBumpError::NoCommitFound) if allow_empty => {
+                (current.clone().reset_metadata(), false)
+            }
             Err(other) => bail!(other),
         };
 

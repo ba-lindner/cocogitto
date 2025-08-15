@@ -9,7 +9,7 @@ pub(crate) struct PackagePathFilter {
 }
 
 impl PackagePathFilter {
-    pub(super) fn from_package(package: &MonoRepoPackage) -> Self {
+    pub(crate) fn from_package(package: &MonoRepoPackage) -> Self {
         Self::new(
             package.path.to_str().expect("valid package path"),
             &package.include,
@@ -17,7 +17,7 @@ impl PackagePathFilter {
         )
     }
 
-    pub(super) fn is_match<P: AsRef<Path> + ?Sized>(&self, path: &P) -> bool {
+    pub(crate) fn is_match<P: AsRef<Path> + ?Sized>(&self, path: &P) -> bool {
         let candidate = Candidate::new(path);
         self.include.is_match_candidate(&candidate) && !self.exclude.is_match_candidate(&candidate)
     }

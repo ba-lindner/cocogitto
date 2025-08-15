@@ -2,6 +2,7 @@ use std::cmp::Ordering;
 use std::fmt::{self, Formatter};
 
 pub use crate::conventional::error::ConventionalCommitError;
+use crate::conventional::version::Increment;
 use crate::{COMMITS_METADATA, SETTINGS};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use colored::*;
@@ -164,24 +165,13 @@ impl Commit {
             .is_some_and(|config| config.omit_from_changelog())
     }
 
-    pub(crate) fn is_major_bump(&self) -> bool {
-        self.conventional.is_breaking_change
-    }
-
-    pub(crate) fn is_minor_bump(&self) -> bool {
-        let Some(commit_config) = COMMITS_METADATA.get(&self.conventional.commit_type) else {
-            return false;
-        };
-
-        commit_config.bump_minor()
-    }
-
-    pub(crate) fn is_patch_bump(&self) -> bool {
-        let Some(commit_config) = COMMITS_METADATA.get(&self.conventional.commit_type) else {
-            return false;
-        };
-
-        commit_config.bump_patch()
+    pub(crate) fn increment(&self, ignore_breaking: bool) -> Increment {
+        match COMMITS_METADATA.get(&self.conventional.commit_type) {
+            _ if self.conventional.is_breaking_change && !ignore_breaking => Increment::Major,
+            Some(conf) if conf.bump_minor() => Increment::Minor,
+            Some(conf) if conf.bump_patch() => Increment::Patch,
+            _ => Increment::NoBump,
+        }
     }
 
     pub fn get_log(&self) -> String {
