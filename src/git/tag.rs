@@ -7,7 +7,6 @@ use semver::Version;
 
 use crate::conventional::version::Increment;
 use crate::git::error::{Git2Error, TagError};
-use crate::git::oid::OidOf;
 use crate::git::repository::Repository;
 use crate::SETTINGS;
 
@@ -124,10 +123,9 @@ impl Repository {
 
     pub fn tag_lookup(&self, option: TagLookUpOptions) -> Result<Vec<Tag>, TagError> {
         let prefix = SETTINGS.tag_prefix.as_ref();
-        let repo_cache = crate::git::rev::cache::get_cache(self);
         let include_pre_release = option.include_pre_release;
 
-        let tag_filter = |tag: &Tag| {
+        let tag_filter = |tag: &&Tag| {
             tag.prefix.as_ref() == prefix
                 && tag.package.as_deref() == option.package_name
                 && option.include_packages != tag.package.is_none()
@@ -138,13 +136,11 @@ impl Repository {
                 }
         };
 
-        Ok(repo_cache
-            .values()
-            .flatten()
-            .filter_map(|oid| match oid {
-                OidOf::Tag(tag) if tag_filter(tag) => Some(tag),
-                _ => None,
-            })
+        Ok(self
+            .get_cache()
+            .tags
+            .iter()
+            .filter(tag_filter)
             .cloned()
             .collect())
     }

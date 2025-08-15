@@ -118,11 +118,7 @@ impl Tag {
     ) -> Result<Tag, BumpError> {
         let oid = self
             .oid
-            .or_else(|| {
-                crate::get_cache(repository)
-                    .get(&self.to_string())
-                    .map(|oids| *oids[0].oid())
-            })
+            .or_else(|| repository.get_cache().refs.get(&self.to_string()).copied())
             .unwrap_or_else(|| repository.get_first_commit().expect("empty repository"));
 
         let mut commits = Vec::new();

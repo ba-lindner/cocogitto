@@ -1,7 +1,6 @@
 use crate::git::error::Git2Error;
 use crate::git::oid::OidOf;
 use crate::git::repository::Repository;
-use crate::git::rev::cache::get_cache;
 use crate::git::tag::Tag;
 use git2::Oid;
 use std::fmt;
@@ -69,36 +68,19 @@ impl Repository {
         from: &str,
         package: Option<&str>,
     ) -> Result<OidOf, Git2Error> {
-        let cache = get_cache(self);
+        let cache = self.get_cache();
+        let oid = cache
+            .refs
+            .get(from)
+            .copied()
+            .or_else(|| Some(self.0.revparse_single(from).ok()?.id()))
+            .ok_or(Git2Error::UnknownRevision(from.to_string()))?;
 
-        // note: `get` cannot be used as `starts_with` is used for comparison
-        let oids = cache
-            .iter()
-            .find(|(k, _)| k.starts_with(from))
-            .map(|(_, v)| v);
-
-        let oid = oids
-            .and_then(|v| {
-                v.iter()
-                    .filter(|oid| {
-                        if let OidOf::Tag(tag) = oid {
-                            tag.package.as_deref() == package
-                        } else {
-                            true
-                        }
-                    })
-                    .next_back()
-            })
-            .cloned();
-        if let Some(oid) = oid {
-            Ok(oid)
+        Ok(if let Some(info) = cache.commits.get(&oid) {
+            info.as_oid_of(package)
         } else {
-            let object = self
-                .0
-                .revparse_single(from)
-                .map_err(|_| Git2Error::UnknownRevision(from.to_string()))?;
-            Ok(OidOf::Other(object.id()))
-        }
+            OidOf::Other(oid)
+        })
     }
 }
 
