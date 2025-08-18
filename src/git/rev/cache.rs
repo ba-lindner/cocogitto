@@ -103,7 +103,7 @@ impl RepoCache {
 }
 
 impl Repository {
-    pub fn get_cache(&self) -> MutexGuard<RepoCache> {
+    pub fn get_cache(&self) -> MutexGuard<'_, RepoCache> {
         let mut cache = self.1.lock().unwrap();
         if cache.is_empty() {
             cache.fill(self).expect("failed to construct tag cache");
