@@ -1,13 +1,12 @@
 use std::cmp::Ordering;
 
+use semver::Version;
+
 #[derive(Debug, PartialEq, Eq, Default, Clone)]
 pub enum IncrementCommand {
-    Major,
-    Minor,
-    Patch,
     #[default]
     Auto,
-    NoBump,
+    Fixed(Increment),
     AutoPackage(String),
     AutoMonoRepoGlobal(Option<Increment>),
     Manual(String),
@@ -21,13 +20,22 @@ pub enum Increment {
     NoBump,
 }
 
-impl From<Increment> for IncrementCommand {
-    fn from(value: Increment) -> Self {
-        match value {
-            Increment::Major => IncrementCommand::Major,
-            Increment::Minor => IncrementCommand::Minor,
-            Increment::Patch => IncrementCommand::Patch,
-            Increment::NoBump => IncrementCommand::NoBump,
+impl Increment {
+    pub fn add_to_version(&self, version: &mut Version) {
+        match self {
+            Increment::Major => {
+                version.major += 1;
+                version.minor = 0;
+                version.patch = 0;
+            }
+            Increment::Minor => {
+                version.minor += 1;
+                version.patch = 0;
+            }
+            Increment::Patch => {
+                version.patch += 1;
+            }
+            Increment::NoBump => {}
         }
     }
 }

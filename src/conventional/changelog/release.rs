@@ -3,106 +3,74 @@ use conventional_commit_parser::commit::Footer;
 use serde::Serialize;
 
 use crate::conventional::commit::Commit;
-use crate::git::oid::OidOf;
+use crate::git::rev::cache::CommitInfo;
 use crate::git::rev::CommitIter;
-use crate::{settings, SETTINGS};
+use crate::settings;
 use colored::Colorize;
 
 use crate::conventional::changelog::error::ChangelogError;
 use log::warn;
 
 #[derive(Debug, Serialize)]
-pub struct Release<'a> {
-    pub version: OidOf,
-    pub from: OidOf,
+pub struct Release {
+    pub version: CommitInfo,
+    pub from: CommitInfo,
     pub date: NaiveDateTime,
-    pub commits: Vec<ChangelogCommit<'a>>,
-    pub previous: Option<Box<Release<'a>>>,
+    pub commits: Vec<ChangelogCommit>,
+    pub previous: Option<Box<Release>>,
 }
 
-impl TryFrom<CommitIter<'_>> for Release<'_> {
+impl TryFrom<CommitIter<'_>> for Release {
     type Error = ChangelogError;
 
-    fn try_from(commits: CommitIter<'_>) -> Result<Self, Self::Error> {
-        let mut releases = vec![];
-        let mut commit_iter = commits.into_iter().rev().peekable();
-
-        while let Some((_oid, _commit)) = commit_iter.peek() {
-            let mut release_commits = vec![];
-
-            for (oid, commit) in commit_iter.by_ref() {
-                if matches!(oid, OidOf::Tag(_)) {
-                    release_commits.push((oid, commit));
-                    break;
-                }
-                release_commits.push((oid, commit));
-            }
-
-            release_commits.reverse();
-            releases.push(release_commits);
-        }
-
-        let mut current = None;
-
-        for release in releases {
-            let next = Release {
-                version: release.first().unwrap().0.clone(),
-                from: current
-                    .as_ref()
-                    .map(|current: &Release| current.version.clone())
-                    .unwrap_or(release.last().unwrap().0.clone()),
-                date: Utc::now().naive_local(),
-                commits: release
-                    .iter()
-                    .filter(|(_commit, commit)| commit.message().is_some())
-                    .filter(|(_commit, commit)| {
-                        if SETTINGS.ignore_merge_commits {
-                            !commit.message().unwrap().starts_with("Merge")
-                        } else {
-                            true
-                        }
-                    })
-                    .filter(|(_commit, commit)| {
-                        if SETTINGS.ignore_fixup_commits {
-                            !commit.message().unwrap().starts_with("fixup!")
-                                && !commit.message().unwrap().starts_with("squash!")
-                                && !commit.message().unwrap().starts_with("amend!")
-                        } else {
-                            true
-                        }
-                    })
-                    .filter_map(|(_, commit)| match Commit::from_git_commit(commit) {
-                        Ok(commit) => {
-                            if !commit.should_omit() {
-                                Some(ChangelogCommit::from(commit))
-                            } else {
-                                None
-                            }
-                        }
-                        Err(err) => {
-                            let err = err.to_string().red();
-                            warn!("{}", err);
-                            None
-                        }
-                    })
-                    .collect(),
-                previous: current.map(Box::new),
-            };
-
-            current = Some(next);
-        }
-
-        current.ok_or(ChangelogError::EmptyRelease)
+    fn try_from(mut commits: CommitIter<'_>) -> Result<Self, Self::Error> {
+        commits.0.reverse();
+        let from = commits
+            .0
+            .first()
+            .ok_or(ChangelogError::EmptyRelease)?
+            .1
+            .clone();
+        commits
+            .0
+            .split_inclusive(|(_, info)| !info.tags.is_empty())
+            .filter_map(|commits| {
+                let version = &commits.last()?.1;
+                let commits = commits.iter().map(|(commit, _)| commit).rev();
+                Some((version, commits))
+            })
+            .fold((None, from), |(prev, from), (version, commits)| {
+                (
+                    Some(Release {
+                        version: version.clone(),
+                        from,
+                        date: Utc::now().naive_local(),
+                        commits: commits
+                            .filter_map(|commit| {
+                                Commit::from_git_commit(commit)
+                                    .inspect_err(|err| warn!("{}", err.to_string().red()))
+                                    .ok()
+                            })
+                            .filter(|commit| !commit.should_omit())
+                            .map(ChangelogCommit::from)
+                            .collect(),
+                        previous: prev.map(Box::new),
+                    }),
+                    version.clone(),
+                )
+            })
+            .0
+            .ok_or(ChangelogError::EmptyRelease)
     }
 }
 
 #[derive(Debug)]
-pub struct ChangelogCommit<'a> {
-    pub author_username: Option<&'a str>,
+pub struct ChangelogCommit {
+    pub author_username: Option<&'static str>,
     pub commit: Commit,
 }
 
-impl From<Commit> for ChangelogCommit<'_> {
+impl From<Commit> for ChangelogCommit {
     fn from(commit: Commit) -> Self {
         let author_username = settings::commit_username(&commit.author);
 
@@ -147,12 +115,13 @@ mod test {
     use crate::git::oid::OidOf;
     use crate::git::repository::Repository;
 
+    use crate::git::rev::cache::CommitInfo;
     use crate::git::tag::Tag;
 
     #[test]
     fn should_get_a_release() -> anyhow::Result<()> {
         let repo = Repository::open(".")?;
-        let iter = repo.revwalk("..")?;
+        let iter = repo.revwalk_pattern("..")?;
         let release = Release::try_from(iter);
         assert_that!(release)
             .is_ok()
@@ -167,7 +136,7 @@ mod test {
         let mut renderer = Renderer::default();
 
         // Act
-        let changelog = renderer.render(release)?;
+        let changelog = renderer.render(&release)?;
 
         // Assert
         assert_eq!(
@@ -196,7 +165,7 @@ mod test {
         })?;
 
         // Act
-        let changelog = renderer.render(release)?;
+        let changelog = renderer.render(&release)?;
 
         // Assert
         assert_eq!(
@@ -229,7 +198,7 @@ mod test {
         })?;
 
         // Act
-        let changelog = renderer.render(release)?;
+        let changelog = renderer.render(&release)?;
 
         // Assert
         assert_eq!(
@@ -260,7 +229,7 @@ mod test {
         let mut renderer = monorepo_renderer(renderer)?;
 
         // Act
-        let changelog = renderer.render(release)?;
+        let changelog = renderer.render(&release)?;
 
         // Assert
         assert_eq!(
@@ -295,7 +264,7 @@ mod test {
         let mut renderer = monorepo_manual_bump_rendered(renderer)?;
 
         // Act
-        let changelog = renderer.render(release)?;
+        let changelog = renderer.render(&release)?;
 
         // Assert
         assert_eq!(
@@ -330,7 +299,7 @@ mod test {
         let mut renderer = monorepo_renderer(renderer)?;
 
         // Act
-        let changelog = renderer.render(release)?;
+        let changelog = renderer.render(&release)?;
 
         // Assert
         assert_eq!(
@@ -365,7 +334,7 @@ mod test {
         let mut renderer = monorepo_manual_bump_rendered(renderer)?;
 
         // Act
-        let changelog = renderer.render(release)?;
+        let changelog = renderer.render(&release)?;
 
         // Assert
         assert_eq!(
@@ -404,7 +373,7 @@ mod test {
         let mut renderer = monorepo_renderer(renderer)?;
 
         // Act
-        let changelog = renderer.render(release)?;
+        let changelog = renderer.render(&release)?;
 
         // Assert
         assert_eq!(
@@ -439,7 +408,7 @@ mod test {
         let mut renderer = package_renderer(renderer)?;
 
         // Act
-        let changelog = renderer.render(release)?;
+        let changelog = renderer.render(&release)?;
 
         // Assert
         assert_eq!(
@@ -470,7 +439,7 @@ mod test {
         let mut renderer = package_renderer(renderer)?;
 
         // Act
-        let changelog = renderer.render(release)?;
+        let changelog = renderer.render(&release)?;
 
         // Assert
         assert_eq!(
@@ -505,7 +474,7 @@ mod test {
         let mut renderer = package_renderer(renderer)?;
 
         // Act
-        let changelog = renderer.render(release)?;
+        let changelog = renderer.render(&release)?;
 
         // Assert
         assert_eq!(
@@ -540,7 +509,7 @@ mod test {
         let mut renderer = monorepo_manual_bump_rendered(renderer)?;
 
         // Act
-        let changelog = renderer.render(release)?;
+        let changelog = renderer.render(&release)?;
 
         // Assert
         assert_eq!(
@@ -563,26 +532,100 @@ mod test {
         Ok(())
     }
 
-    impl Release<'_> {
-        pub fn fixture() -> Release<'static> {
+    fn monorepo_renderer(renderer: Renderer) -> Result<Renderer> {
+        let renderer = renderer.with_monorepo_context(MonoRepoContext {
+            package_lock: false,
+            packages: vec![
+                PackageBumpContext {
+                    package_name: "one",
+                    package_path: "crates/one".to_string(),
+                    version: OidOf::Tag(Tag::from_str(
+                        "0.1.0",
+                        Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
+                    )?),
+                    from: Some(OidOf::Tag(Tag::from_str(
+                        "0.2.0",
+                        Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
+                    )?)),
+                },
+                PackageBumpContext {
+                    package_name: "two",
+                    package_path: "crates/two".to_string(),
+                    version: OidOf::Tag(Tag::from_str(
+                        "0.2.0",
+                        Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
+                    )?),
+                    from: Some(OidOf::Tag(Tag::from_str(
+                        "0.3.0",
+                        Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
+                    )?)),
+                },
+            ],
+        });
+
+        Ok(renderer)
+    }
+
+    fn monorepo_manual_bump_rendered(renderer: Renderer) -> Result<Renderer> {
+        let renderer = renderer.with_monorepo_context(MonoRepoContext {
+            package_lock: true,
+            packages: vec![
+                PackageBumpContext {
+                    package_name: "one",
+                    package_path: "crates/one".to_string(),
+                    version: OidOf::Tag(Tag::from_str(
+                        "0.1.0",
+                        Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
+                    )?),
+                    from: None,
+                },
+                PackageBumpContext {
+                    package_name: "two",
+                    package_path: "crates/two".to_string(),
+                    version: OidOf::Tag(Tag::from_str(
+                        "0.2.0",
+                        Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
+                    )?),
+                    from: None,
+                },
+            ],
+        });
+
+        Ok(renderer)
+    }
+
+    fn package_renderer(renderer: Renderer) -> Result<Renderer> {
+        let renderer = renderer.with_package_context(PackageContext {
+            package_name: "one",
+        });
+
+        Ok(renderer)
+    }
+
+    impl Release {
+        pub fn fixture() -> Release {
             let date =
                 NaiveDateTime::parse_from_str("2015-09-05 23:56:04", "%Y-%m-%d %H:%M:%S").unwrap();
 
             let paul_delafosse = "Paul Delafosse";
             let a_commit_hash = "17f7e23081db15e9318aeb37529b1d473cf41cbe";
-            let version = Tag::from_str(
-                "1.0.0",
-                Some(Oid::from_str("9bb5facac5724bc81385fdd740fedbb49056da00").unwrap()),
-            )
-            .unwrap();
-            let from = Tag::from_str(
-                "0.1.0",
-                Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
-            )
-            .unwrap();
+            let vers_oid = Oid::from_str("9bb5facac5724bc81385fdd740fedbb49056da00").unwrap();
+            let version = Tag::from_str("1.0.0", Some(vers_oid)).unwrap();
+            let from_oid = Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap();
+            let from = Tag::from_str("0.1.0", Some(from_oid)).unwrap();
             Release {
-                version: OidOf::Tag(version),
-                from: OidOf::Tag(from),
+                version: CommitInfo {
+                    is_head: false,
+                    is_first: false,
+                    oid: vers_oid,
+                    tags: vec![version],
+                },
+                from: CommitInfo {
+                    is_head: false,
+                    is_first: false,
+                    oid: from_oid,
+                    tags: vec![from],
+                },
                 date,
                 commits: vec![
                     ChangelogCommit {
@@ -649,75 +692,5 @@ mod test {
                 previous: None,
             }
         }
-    }
-
-    fn monorepo_renderer(renderer: Renderer) -> Result<Renderer> {
-        let renderer = renderer.with_monorepo_context(MonoRepoContext {
-            package_lock: false,
-            packages: vec![
-                PackageBumpContext {
-                    package_name: "one",
-                    package_path: "crates/one",
-                    version: OidOf::Tag(Tag::from_str(
-                        "0.1.0",
-                        Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
-                    )?),
-                    from: Some(OidOf::Tag(Tag::from_str(
-                        "0.2.0",
-                        Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
-                    )?)),
-                },
-                PackageBumpContext {
-                    package_name: "two",
-                    package_path: "crates/two",
-                    version: OidOf::Tag(Tag::from_str(
-                        "0.2.0",
-                        Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
-                    )?),
-                    from: Some(OidOf::Tag(Tag::from_str(
-                        "0.3.0",
-                        Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
-                    )?)),
-                },
-            ],
-        });
-
-        Ok(renderer)
-    }
-
-    fn monorepo_manual_bump_rendered(renderer: Renderer) -> Result<Renderer> {
-        let renderer = renderer.with_monorepo_context(MonoRepoContext {
-            package_lock: true,
-            packages: vec![
-                PackageBumpContext {
-                    package_name: "one",
-                    package_path: "crates/one",
-                    version: OidOf::Tag(Tag::from_str(
-                        "0.1.0",
-                        Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
-                    )?),
-                    from: None,
-                },
-                PackageBumpContext {
-                    package_name: "two",
-                    package_path: "crates/two",
-                    version: OidOf::Tag(Tag::from_str(
-                        "0.2.0",
-                        Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
-                    )?),
-                    from: None,
-                },
-            ],
-        });
-
-        Ok(renderer)
-    }
-
-    fn package_renderer(renderer: Renderer) -> Result<Renderer> {
-        let renderer = renderer.with_package_context(PackageContext {
-            package_name: "one",
-        });
-
-        Ok(renderer)
     }
 }

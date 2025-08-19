@@ -7,9 +7,7 @@ use std::{
 
 use crate::git::error::Git2Error;
 use crate::git::rev::cache::RepoCache;
-use git2::{
-    Commit as Git2Commit, IndexAddOption, Object, ObjectType, Oid, Repository as Git2Repository,
-};
+use git2::{Commit as Git2Commit, IndexAddOption, Oid, Repository as Git2Repository};
 
 pub(crate) struct Repository(pub(crate) Git2Repository, pub(super) Mutex<RepoCache>);
 
@@ -72,15 +70,19 @@ impl Repository {
             .is_ok_and(|s| s.to_lowercase() == "x509")
     }
 
+    fn new(raw: Git2Repository) -> Self {
+        Self(raw, Mutex::new(RepoCache::empty()))
+    }
+
     pub(crate) fn init<S: AsRef<Path> + ?Sized>(path: &S) -> Result<Repository, Git2Error> {
         let repository =
             Git2Repository::init(path).map_err(Git2Error::FailedToInitializeRepository)?;
-        Ok(Repository(repository, Mutex::new(RepoCache::empty())))
+        Ok(Self::new(repository))
     }
 
     pub(crate) fn open<S: AsRef<Path> + ?Sized>(path: &S) -> Result<Repository, Git2Error> {
         let repo = Git2Repository::discover(path).map_err(Git2Error::FailedToOpenRepository)?;
-        Ok(Repository(repo, Mutex::new(RepoCache::empty())))
+        Ok(Self::new(repo))
     }
 
     pub(crate) fn get_repo_dir(&self) -> Option<&Path> {
@@ -133,19 +135,6 @@ impl Repository {
             .name()
             .map(|name| name.to_string())
             .ok_or(Git2Error::CommitterNotFound)
-    }
-
-    pub(crate) fn tree_to_treeish(
-        &self,
-        arg: Option<&String>,
-    ) -> Result<Option<Object<'_>>, git2::Error> {
-        let arg = match arg {
-            Some(s) => s,
-            None => return Ok(None),
-        };
-        let obj = self.0.revparse_single(arg)?;
-        let tree = obj.peel(ObjectType::Tree)?;
-        Ok(Some(tree))
     }
 }
 

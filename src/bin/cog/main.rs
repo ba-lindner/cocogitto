@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use cocogitto::conventional::changelog::template::{RemoteContext, Template};
 use cocogitto::conventional::changelog::ReleaseType;
 use cocogitto::conventional::commit as conv_commit;
-use cocogitto::conventional::version::IncrementCommand;
+use cocogitto::conventional::version::{Increment, IncrementCommand};
 
 use cocogitto::log::filter::{CommitFilter, CommitFilters};
 use cocogitto::log::output::Output;
@@ -454,9 +454,9 @@ fn main() -> Result<()> {
                     }
                     None => IncrementCommand::Auto,
                 },
-                None if major => IncrementCommand::Major,
-                None if minor => IncrementCommand::Minor,
-                None if patch => IncrementCommand::Patch,
+                None if major => IncrementCommand::Fixed(Increment::Major),
+                None if minor => IncrementCommand::Fixed(Increment::Minor),
+                None if patch => IncrementCommand::Fixed(Increment::Patch),
                 _ => unreachable!(),
             };
 
@@ -651,7 +651,7 @@ fn main() -> Result<()> {
                         cocogitto.get_monorepo_changelog(pattern, template)?
                     } else {
                         let changelog = cocogitto.get_changelog(pattern, true)?;
-                        changelog.into_markdown(template, ReleaseType::Standard)?
+                        changelog.as_markdown(template, ReleaseType::Standard)?
                     }
                 }
             };

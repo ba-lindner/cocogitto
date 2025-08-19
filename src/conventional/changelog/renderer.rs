@@ -47,12 +47,12 @@ impl Renderer {
         self
     }
 
-    pub(crate) fn render(&mut self, version: Release) -> Result<String, tera::Error> {
-        let mut release = self.render_release(&version)?;
+    pub(crate) fn render(&mut self, version: &Release) -> Result<String, tera::Error> {
+        let mut release = self.render_release(version)?;
         let mut version = version;
-        while let Some(previous) = version.previous.map(|v| *v) {
+        while let Some(previous) = version.previous.as_ref() {
             release.push_str("\n- - -\n\n");
-            release.push_str(self.render_release(&previous)?.as_str());
+            release.push_str(self.render_release(previous)?.as_str());
             version = previous;
         }
 

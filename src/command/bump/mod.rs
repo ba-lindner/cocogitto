@@ -1,11 +1,12 @@
 use crate::conventional::changelog::release::Release;
 use crate::conventional::commit::Commit;
 use crate::git::error::TagError;
-use crate::git::oid::OidOf;
 
-use crate::conventional::error::BumpError as ConvBumpError;
-use crate::conventional::version::IncrementCommand;
-use crate::git::repository::Repository;
+use crate::conventional::version::{Increment, IncrementCommand};
+use crate::git::rev::cache::CommitInfo;
+use crate::git::rev::filters::CommitRangeFilter;
+use crate::git::rev::revspec::RevSpec;
+use crate::git::rev::revwalk::RevwalkCache;
 use crate::git::tag::{Tag, TagLookUpOptions};
 use crate::hook::{Hook, HookVersion, Hooks};
 use crate::settings::{HookType, MonoRepoPackage, Settings};
@@ -13,6 +14,7 @@ use crate::BumpError;
 use crate::{CocoGitto, COMMITS_METADATA, SETTINGS};
 use anyhow::Result;
 use anyhow::{bail, ensure, Context};
+use chrono::Utc;
 use colored::Colorize;
 use conventional_commit_parser::commit::CommitType;
 use globset::Glob;
@@ -61,75 +63,12 @@ pub struct PackageBumpOptions<'a> {
 struct BumpResult {
     current: Tag,
     next: Tag,
-    had_commits: bool,
+    release: Release,
 }
 
 impl BumpResult {
     fn no_change(&self) -> bool {
         self.current.version == self.next.version
-    }
-}
-
-impl<'a> BumpOptions<'a> {
-    fn get_new_version(
-        &self,
-        repository: &Repository,
-        package: Option<&str>,
-        allow_empty: bool,
-        increment: Option<IncrementCommand>,
-    ) -> Result<BumpResult> {
-        let tag_opts = package.map(TagLookUpOptions::package).unwrap_or_default();
-        let current = match repository.get_latest_tag(tag_opts) {
-            Ok(tag) => tag,
-            Err(TagError::NoTag) => Tag::default(),
-            Err(other) => bail!(other),
-        };
-        let current_prerelease = repository
-            .get_latest_tag(tag_opts.include_pre_release())
-            .ok()
-            .filter(|tag| *tag > current);
-
-        let increment = increment.unwrap_or_else(|| self.increment.clone());
-        let (mut next, had_commits) = match current.bump(increment, repository) {
-            Ok(tag) => (tag, true),
-            Err(ConvBumpError::NoCommitFound) if allow_empty => {
-                (current.clone().reset_metadata(), false)
-            }
-            Err(other) => bail!(other),
-        };
-
-        // if prerelease exists, ensure the new tag is not smaller
-        if let Some(pre_release) = &current_prerelease {
-            if next < *pre_release {
-                next.version.major = pre_release.version.major;
-                next.version.minor = pre_release.version.minor;
-                next.version.patch = pre_release.version.patch;
-            }
-        }
-
-        if let Some(pre_release) = self.pre_release {
-            next.version.pre = Prerelease::new(pre_release)?;
-        }
-
-        if let Some(build) = self.build {
-            next.version.build = BuildMetadata::new(build)?;
-        }
-
-        // ensure version doesn't decrease
-        if next < current {
-            bail!(
-                "{}:\n\t{} version MUST be greater than current one: {}\n",
-                "SemVer Error".red(),
-                "cause:".red(),
-                format!("{next} <= {current}").red(),
-            );
-        }
-
-        Ok(BumpResult {
-            current,
-            next,
-            had_commits,
-        })
     }
 }
 
@@ -217,14 +156,6 @@ impl<'a> HookRunOptions<'a> {
 }
 
 impl CocoGitto {
-    fn get_bump_revspec(&mut self, current_tag: &Tag) -> String {
-        if current_tag.is_zero() {
-            "..".to_string()
-        } else {
-            format!("{current_tag}..")
-        }
-    }
-
     pub fn unwrap_or_stash_and_exit<T>(&mut self, tag: &Tag, result: Result<T>) -> T {
         match result {
             Ok(res) => res,
@@ -246,7 +177,7 @@ impl CocoGitto {
         }
     }
 
-    fn pre_bump_checks(&mut self, skip_untracked: bool) -> Result<()> {
+    fn pre_bump_checks(&self, skip_untracked: bool) -> Result<()> {
         if *SETTINGS == Settings::default() {
             let part1 = "Warning: using".yellow();
             let part2 = "with the default configuration. \n".yellow();
@@ -287,60 +218,109 @@ impl CocoGitto {
         Ok(())
     }
 
-    /// The target version is not created yet when generating the changelog.
-    pub fn get_changelog_with_target_version(
-        &self,
-        pattern: &str,
-        tag: Tag,
-    ) -> Result<Release<'_>> {
-        let commit_range = self.repository.revwalk(pattern)?;
-        let mut release = Release::try_from(commit_range)?;
-        release.version = OidOf::Tag(tag);
-        Ok(release)
-    }
-
-    /// The target package version is not created yet when generating the changelog.
-    pub fn get_package_changelog_with_target_version(
-        &self,
-        pattern: &str,
-        tag: Tag,
-        package: &str,
-    ) -> Result<Release<'_>> {
-        let commit_range = self
+    fn get_next_version<'c>(
+        &'c self,
+        opts: &'_ BumpOptions,
+        filter: CommitRangeFilter<'_>,
+        cache: Option<&'_ mut RevwalkCache<'c>>,
+        allow_empty: bool,
+    ) -> Result<BumpResult> {
+        let tag_opts = match filter {
+            CommitRangeFilter::Package(pkg) => TagLookUpOptions::package(pkg),
+            _ => TagLookUpOptions::default(),
+        };
+        let current = match self.repository.get_latest_tag(tag_opts) {
+            Ok(tag) => tag,
+            Err(TagError::NoTag) => Tag::default(),
+            Err(other) => bail!(other),
+        };
+        let current_prerelease = self
             .repository
-            .get_commit_range_for_package(pattern, package)?;
+            .get_latest_tag(tag_opts.include_pre_release())
+            .ok()
+            .filter(|tag| *tag > current);
 
-        let mut release = Release::try_from(commit_range)?;
-        release.version = OidOf::Tag(tag);
-        Ok(release)
-    }
-
-    /// The target global monorepo version is not created yet when generating the changelog.
-    pub fn get_monorepo_global_changelog_for_version(
-        &self,
-        pattern: &str,
-        from: OidOf,
-        tag: Tag,
-    ) -> Result<Release<'_>> {
-        let commit_range = self
-            .repository
-            .get_commit_range_for_monorepo_global(pattern)?;
-
-        let release = match Release::try_from(commit_range) {
-            Ok(mut release) => {
-                release.version = OidOf::Tag(tag);
-                release
+        let spec = RevSpec {
+            from: current.oid,
+            to: None,
+        };
+        let mut iter = if let Some(cache) = cache {
+            self.repository.revwalk_cached(&spec, cache)?
+        } else {
+            self.repository.revwalk(&spec)?
+        };
+        iter.apply_ignore_settings();
+        let filter_after_increment =
+            opts.increment == IncrementCommand::Auto && filter == CommitRangeFilter::Global;
+        if !filter_after_increment {
+            iter.filter(&self.repository, filter)?;
+        }
+        let hist_increment = iter.get_increment(current.version.major == 0);
+        let hist_increment = if allow_empty {
+            hist_increment.unwrap_or(Increment::NoBump)
+        } else {
+            hist_increment?
+        };
+        if filter_after_increment {
+            iter.filter(&self.repository, filter)?;
+        }
+        let mut next = match &opts.increment {
+            IncrementCommand::Auto | IncrementCommand::AutoPackage(_) => {
+                current.bump_fixed(hist_increment)
             }
-            Err(_) => Release {
-                version: OidOf::Tag(tag),
-                from,
-                date: Default::default(),
-                commits: vec![],
-                previous: None,
-            },
+            IncrementCommand::Fixed(increment) => current.bump_fixed(*increment),
+            IncrementCommand::AutoMonoRepoGlobal(pkg_increment) => {
+                current.bump_fixed(hist_increment.max(pkg_increment.unwrap_or(Increment::NoBump)))
+            }
+            IncrementCommand::Manual(version) => current.manual_bump(version)?,
         };
 
-        Ok(release)
+        // if prerelease exists, ensure the new tag is not smaller
+        if let Some(pre_release) = &current_prerelease {
+            if next < *pre_release {
+                next.version.major = pre_release.version.major;
+                next.version.minor = pre_release.version.minor;
+                next.version.patch = pre_release.version.patch;
+            }
+        }
+
+        if let Some(pre_release) = opts.pre_release {
+            next.version.pre = Prerelease::new(pre_release)?;
+        }
+
+        if let Some(build) = opts.build {
+            next.version.build = BuildMetadata::new(build)?;
+        }
+
+        // ensure version doesn't decrease
+        if next < current {
+            bail!(
+                "{}:\n\t{} version MUST be greater than current one: {}\n",
+                "SemVer Error".red(),
+                "cause:".red(),
+                format!("{next} <= {current}").red(),
+            );
+        }
+
+        let release = Release::try_from(iter);
+        let mut release = if allow_empty {
+            release.unwrap_or_else(|_| Release {
+                version: CommitInfo::from_tag(&next),
+                from: CommitInfo::from_tag(&current),
+                date: Utc::now().naive_local(),
+                commits: Vec::new(),
+                previous: None,
+            })
+        } else {
+            release?
+        };
+        release.version = CommitInfo::from_tag(&next);
+
+        Ok(BumpResult {
+            current,
+            next,
+            release,
+        })
     }
 
     fn run_hooks(&self, options: HookRunOptions) -> Result<()> {
@@ -428,7 +408,7 @@ impl CocoGitto {
     }
 }
 
-impl Release<'_> {
+impl Release {
     fn pretty_print_bump_summary(&self) -> Result<(), fmt::Error> {
         let conventional_commits: Vec<&Commit> = self
             .commits

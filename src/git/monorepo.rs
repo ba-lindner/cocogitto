@@ -60,11 +60,11 @@ mod test {
         )?;
 
         // Act
-        let range = repo.get_commit_range_for_package("..HEAD", "two")?;
-        let range = range.into_iter().collect::<Vec<_>>();
+        let mut range = repo.revwalk_pattern("..HEAD")?;
+        range.retain_package(&repo, "two")?;
 
         // Assert
-        assert_that!(range).has_length(2);
+        assert_that!(range.0).has_length(2);
 
         Ok(())
     }

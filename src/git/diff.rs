@@ -1,36 +1,22 @@
 use crate::git::repository::Repository;
-use git2::{Diff, DiffOptions, Object};
+use git2::DiffOptions;
 
 impl Repository {
-    pub(crate) fn get_diff(&self, include_untracked: bool) -> Option<Diff<'_>> {
+    pub(crate) fn is_dirty(&self, include_untracked: bool) -> bool {
         let mut options = DiffOptions::new();
         options.include_untracked(include_untracked);
 
-        let diff = match self.get_head() {
-            Some(head) => self
-                .0
-                .diff_tree_to_index(head.as_tree(), None, Some(&mut options)),
-            None => self
-                .0
-                .diff_tree_to_workdir_with_index(None, Some(&mut options)),
+        let head = self.0.head().and_then(|head| head.peel_to_tree());
+
+        let diff = if let Ok(tree) = head {
+            self.0
+                .diff_tree_to_index(Some(&tree), None, Some(&mut options))
+        } else {
+            self.0
+                .diff_tree_to_workdir_with_index(None, Some(&mut options))
         };
 
-        match diff {
-            Ok(diff) => {
-                if diff.deltas().len() > 0 {
-                    Some(diff)
-                } else {
-                    None
-                }
-            }
-            Err(..) => None,
-        }
-    }
-
-    fn get_head(&self) -> Option<Object<'_>> {
-        self.tree_to_treeish(Some(&"HEAD".to_string()))
-            .ok()
-            .flatten()
+        diff.is_ok_and(|diff| diff.deltas().len() > 0)
     }
 }
 
@@ -43,44 +29,6 @@ mod test {
     use speculoos::prelude::*;
 
     #[sealed_test]
-    fn get_head_some() -> Result<()> {
-        // Arrange
-        let repo = git_init_no_gpg()?;
-
-        run_cmd!(
-            echo changes > file;
-            git add .;
-        )?;
-
-        repo.commit("first commit", false, false)?;
-
-        // Act
-        let head = repo.get_head();
-
-        // Assert
-        assert_that!(head).is_some();
-        Ok(())
-    }
-
-    #[sealed_test]
-    fn get_head_none() -> Result<()> {
-        // Arrange
-        let repo = git_init_no_gpg()?;
-
-        run_cmd!(
-            echo changes > file;
-            git add .;
-        )?;
-
-        // Act
-        let head = repo.get_head();
-
-        // Assert
-        assert_that!(head).is_none();
-        Ok(())
-    }
-
-    #[sealed_test]
     fn get_diff_some() -> Result<()> {
         let repo = git_init_no_gpg()?;
 
@@ -91,10 +39,10 @@ mod test {
         )?;
 
         // Act
-        let diffs = repo.get_diff(false);
+        let dirty = repo.is_dirty(false);
 
         // Assert
-        assert!(diffs.is_some());
+        assert_that!(dirty).is_true();
         Ok(())
     }
 
@@ -108,10 +56,10 @@ mod test {
         )?;
 
         // Act
-        let diffs = repo.get_diff(false);
+        let dirty = repo.is_dirty(false);
 
         // Assert
-        assert_that!(diffs.is_none());
+        assert_that!(dirty).is_false();
         Ok(())
     }
 
@@ -125,10 +73,10 @@ mod test {
         )?;
 
         // Act
-        let diffs = repo.get_diff(true);
+        let dirty = repo.is_dirty(true);
 
         // Assert
-        assert!(diffs.is_some());
+        assert_that!(dirty).is_true();
         Ok(())
     }
 
@@ -138,10 +86,10 @@ mod test {
         let repo = git_init_no_gpg()?;
 
         // Act
-        let diffs = repo.get_diff(true);
+        let dirty = repo.is_dirty(true);
 
         // Assert
-        assert!(diffs.is_none());
+        assert_that!(dirty).is_false();
         Ok(())
     }
 }

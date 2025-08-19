@@ -4,19 +4,31 @@ use crate::git::error::Git2Error;
 use crate::git::oid::OidOf;
 use crate::git::repository::Repository;
 use crate::git::tag::Tag;
+use std::borrow::Cow;
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::sync::MutexGuard;
 
-#[derive(Debug)]
-pub(crate) struct CommitInfo {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitInfo {
     pub is_head: bool,
     pub is_first: bool,
     pub oid: Oid,
     pub tags: Vec<Tag>,
 }
 
+impl Display for CommitInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(tag) = self.tags.first() {
+            tag.fmt(f)
+        } else {
+            self.oid.fmt(f)
+        }
+    }
+}
+
 impl CommitInfo {
-    fn new(oid: Oid) -> CommitInfo {
+    pub fn new(oid: Oid) -> CommitInfo {
         Self {
             is_head: false,
             is_first: false,
@@ -25,12 +37,20 @@ impl CommitInfo {
         }
     }
 
+    pub fn from_tag(tag: &Tag) -> Self {
+        Self {
+            is_first: false,
+            is_head: false,
+            oid: tag.oid.unwrap_or(Oid::zero()),
+            tags: vec![tag.clone()],
+        }
+    }
+
     pub fn as_oid_of(&self, package: Option<&str>) -> OidOf {
         let tag = self
             .tags
             .iter()
-            .filter(|tag| tag.package.as_deref() == package)
-            .next();
+            .find(|tag| tag.package.as_deref() == package);
         match tag {
             Some(tag) => OidOf::Tag(tag.clone()),
             None if self.is_first => OidOf::FirstCommit(self.oid),
@@ -100,6 +120,14 @@ impl RepoCache {
         self.refs.insert(short, oid);
         self.commits.entry(oid).or_insert(CommitInfo::new(oid))
     }
+
+    pub fn get_info(&self, oid: Oid) -> Cow<'_, CommitInfo> {
+        if let Some(info) = self.commits.get(&oid) {
+            Cow::Borrowed(info)
+        } else {
+            Cow::Owned(CommitInfo::new(oid))
+        }
+    }
 }
 
 impl Repository {
@@ -109,6 +137,25 @@ impl Repository {
             cache.fill(self).expect("failed to construct tag cache");
         }
         cache
+    }
+
+    /// get commit oid from revspec
+    ///
+    /// this uses the repo cache, so don't try to fill it this way
+    pub fn resolve_commit_oid(&self, spec: &str) -> Result<Oid, Git2Error> {
+        // first, try cache
+        let from_cache = self.get_cache().refs.get(spec).copied();
+        // fallback to repository
+        let from_repo = || {
+            self.0
+                .revparse_single(spec)
+                .and_then(|obj| obj.peel_to_commit())
+                .map(|commit| commit.id())
+                .ok()
+        };
+        from_cache
+            .or_else(from_repo)
+            .ok_or(Git2Error::UnknownRevision(spec.to_string()))
     }
 
     fn resolve_tag<'t>(&'_ self, tag: &'t str) -> Option<(&'t str, Oid, Tag)> {

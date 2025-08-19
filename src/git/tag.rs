@@ -50,7 +50,7 @@ impl<'a> TagLookUpOptions<'a> {
 
 impl Repository {
     pub(crate) fn create_tag(&self, tag: &Tag, disable_bump_commit: bool) -> Result<(), Git2Error> {
-        if !disable_bump_commit && self.get_diff(true).is_some() {
+        if !disable_bump_commit && self.is_dirty(true) {
             let statuses = self.get_statuses()?;
             return Err(Git2Error::ChangesNeedToBeCommitted(statuses));
         }
@@ -68,7 +68,7 @@ impl Repository {
         msg: &str,
         disable_bump_commit: bool,
     ) -> Result<(), Git2Error> {
-        if !disable_bump_commit && self.get_diff(true).is_some() {
+        if !disable_bump_commit && self.is_dirty(true) {
             let statuses = self.get_statuses()?;
             return Err(Git2Error::ChangesNeedToBeCommitted(statuses));
         }

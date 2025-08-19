@@ -57,6 +57,16 @@ impl HookVersion {
     }
 }
 
+impl Tag {
+    pub(crate) fn as_hook_version(&self) -> Option<HookVersion> {
+        if self.is_zero() {
+            None
+        } else {
+            Some(HookVersion::new(self.clone()))
+        }
+    }
+}
+
 impl VersionSpan {
     pub(crate) fn build_version_str(
         &mut self,

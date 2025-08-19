@@ -13,7 +13,6 @@ use conventional_commit_parser::parse_footers;
 use once_cell::sync::Lazy;
 
 use conventional::commit::{Commit, CommitConfig};
-use conventional::version::IncrementCommand;
 use error::BumpError;
 use git::repository::Repository;
 

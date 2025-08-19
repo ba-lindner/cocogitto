@@ -7,7 +7,7 @@ use std::fmt::Write;
 
 impl CocoGitto {
     pub fn get_log(&self, filters: CommitFilters) -> Result<String> {
-        let commits = self.repository.revwalk("..")?;
+        let commits = self.repository.revwalk_old("..")?;
         let logs = commits
             .iter_commits()
             // Remove merge commits

@@ -1,180 +1,143 @@
+use std::fmt::Display;
+
 use crate::git::error::Git2Error;
-use crate::git::oid::OidOf;
 use crate::git::repository::Repository;
 use crate::git::tag::Tag;
 use git2::Oid;
-use std::fmt;
-use std::fmt::Formatter;
 
-#[derive(Debug, Clone)]
-pub enum RevSpecPattern2 {
-    Range { from: OidOf, to: OidOf },
-    AtTag { from: OidOf, to: OidOf },
+#[derive(Debug, Default, Hash, PartialEq, Eq, Clone, Copy)]
+pub(crate) struct RevSpec {
+    pub from: Option<Oid>,
+    pub to: Option<Oid>,
 }
 
-impl RevSpecPattern2 {
-    pub fn from(&self) -> &Oid {
-        match self {
-            RevSpecPattern2::AtTag { from, .. } | RevSpecPattern2::Range { from, .. } => from.oid(),
-        }
-    }
-
-    pub fn to(&self) -> &Oid {
-        match self {
-            RevSpecPattern2::AtTag { to, .. } | RevSpecPattern2::Range { to, .. } => to.oid(),
-        }
-    }
-}
-
-impl Repository {
-    pub(super) fn revspec_from_str(&self, s: &str) -> Result<RevSpecPattern2, Git2Error> {
-        if let Some((from, to)) = s.split_once("..") {
-            let from = if from.is_empty() {
-                OidOf::Other(self.get_first_commit()?)
-            } else {
-                self.resolve_oid_of(from)?
-            };
-
-            let to = if to.is_empty() {
-                OidOf::Head(self.get_head_commit_oid()?)
-            } else {
-                self.resolve_oid_of(to)?
-            };
-
-            Ok(RevSpecPattern2::Range { from, to })
-        } else if let Ok(tag) = Tag::from_str(s, None) {
-            let previous = self.get_previous_tag(&tag)?.map(OidOf::Tag);
-
-            let previous = match previous {
-                None => OidOf::Other(self.get_first_commit()?),
-                Some(previous) => previous,
-            };
-
-            Ok(RevSpecPattern2::AtTag {
-                from: previous,
-                to: self.resolve_oid_of(s)?,
-            })
-        } else {
-            Err(Git2Error::InvalidCommitRangePattern(s.to_string()))
-        }
-    }
-
-    pub(super) fn resolve_oid_of(&self, from: &str) -> Result<OidOf, Git2Error> {
-        self.resolve_oid_of_package(from, None)
-    }
-
-    pub(super) fn resolve_oid_of_package(
-        &self,
-        from: &str,
-        package: Option<&str>,
-    ) -> Result<OidOf, Git2Error> {
-        let cache = self.get_cache();
-        let oid = cache
-            .refs
-            .get(from)
-            .copied()
-            .or_else(|| Some(self.0.revparse_single(from).ok()?.id()))
-            .ok_or(Git2Error::UnknownRevision(from.to_string()))?;
-
-        Ok(if let Some(info) = cache.commits.get(&oid) {
-            info.as_oid_of(package)
-        } else {
-            OidOf::Other(oid)
+impl RevSpec {
+    pub fn from_tag(repository: &Repository, tag: &Tag, tag_name: &str) -> Result<Self, Git2Error> {
+        let prev = repository
+            .get_previous_tag(tag)?
+            .map(|prev| *prev.oid_unchecked());
+        let curr = repository.resolve_commit_oid(tag_name)?;
+        Ok(Self {
+            from: prev,
+            to: Some(curr),
         })
     }
+
+    pub fn parse(spec: &str, repository: &Repository) -> Result<Self, Git2Error> {
+        if let Some((from, to)) = spec.split_once("..") {
+            let parse_part = |part: &str| {
+                (!part.is_empty())
+                    .then(|| repository.resolve_commit_oid(part))
+                    .transpose()
+            };
+            Ok(Self {
+                from: parse_part(from)?,
+                to: parse_part(to)?,
+            })
+        } else if let Ok(tag) = Tag::from_str(spec, None) {
+            Self::from_tag(repository, &tag, spec)
+        } else {
+            Err(Git2Error::InvalidCommitRangePattern(spec.to_string()))
+        }
+    }
 }
 
-impl fmt::Display for RevSpecPattern2 {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        match self {
-            RevSpecPattern2::AtTag { from, to } | RevSpecPattern2::Range { from, to } => {
-                write!(f, "{from}..{to}")
-            }
+impl Display for RevSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(from) = self.from {
+            from.fmt(f)?;
         }
+        f.write_str("..")?;
+        if let Some(to) = self.to {
+            to.fmt(f)?;
+        }
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod test {
-    use crate::git::oid::OidOf;
-    use crate::git::rev::revspec::RevSpecPattern2;
-    use crate::git::tag::Tag;
+    use crate::git::rev::revspec::RevSpec;
     use crate::test_helpers::{commit, git_init_no_gpg, git_tag};
     use anyhow::Result;
     use git2::Oid;
     use sealed_test::prelude::*;
-    use semver::Version;
     use speculoos::prelude::*;
 
-    #[sealed_test]
-    fn should_resolve_tag_oid() -> Result<()> {
-        let repo = git_init_no_gpg()?;
-        commit("chore: first commit")?;
-        let commit_oid = commit("chore: v1")?;
-        git_tag("1.0.0")?;
+    // these tests need to go somewhere else
 
-        let oid = repo.resolve_oid_of("1.0.0")?;
+    // #[sealed_test]
+    // fn should_resolve_tag_oid() -> Result<()> {
+    //     let repo = git_init_no_gpg()?;
+    //     commit("chore: first commit")?;
+    //     let commit_oid = commit("chore: v1")?;
+    //     git_tag("1.0.0")?;
 
-        assert_that!(oid).is_equal_to(OidOf::Tag(Tag {
-            package: None,
-            prefix: None,
-            version: Version::new(1, 0, 0),
-            oid: Some(Oid::from_str(&commit_oid)?),
-        }));
+    //     let oid = repo.resolve_oid_of("1.0.0")?;
 
-        Ok(())
-    }
+    //     assert_that!(oid).is_equal_to(OidOf::Tag(Tag {
+    //         package: None,
+    //         prefix: None,
+    //         version: Version::new(1, 0, 0),
+    //         oid: Some(Oid::from_str(&commit_oid)?),
+    //     }));
 
-    #[sealed_test]
-    fn should_resolve_head_oid() -> Result<()> {
-        let repo = git_init_no_gpg()?;
-        commit("chore: first commit")?;
-        let commit_oid = commit("chore: other")?;
+    //     Ok(())
+    // }
 
-        let oid = repo.resolve_oid_of(&commit_oid)?;
+    // #[sealed_test]
+    // fn should_resolve_head_oid() -> Result<()> {
+    //     let repo = git_init_no_gpg()?;
+    //     commit("chore: first commit")?;
+    //     let commit_oid = commit("chore: other")?;
 
-        assert_that!(oid).is_equal_to(OidOf::Head(Oid::from_str(&commit_oid)?));
+    //     let oid = repo.resolve_oid_of(&commit_oid)?;
 
-        Ok(())
-    }
+    //     assert_that!(oid).is_equal_to(OidOf::Head(Oid::from_str(&commit_oid)?));
 
-    #[sealed_test]
-    fn should_resolve_commit_oid() -> Result<()> {
-        let repo = git_init_no_gpg()?;
-        commit("chore: first commit")?;
-        let commit_oid = commit("chore: other")?;
-        commit("chore: head")?;
+    //     Ok(())
+    // }
 
-        let oid = repo.resolve_oid_of(&commit_oid)?;
+    // #[sealed_test]
+    // fn should_resolve_commit_oid() -> Result<()> {
+    //     let repo = git_init_no_gpg()?;
+    //     commit("chore: first commit")?;
+    //     let commit_oid = commit("chore: other")?;
+    //     commit("chore: head")?;
 
-        assert_that!(oid).is_equal_to(OidOf::Other(Oid::from_str(&commit_oid)?));
+    //     let oid = repo.resolve_oid_of(&commit_oid)?;
 
-        Ok(())
-    }
+    //     assert_that!(oid).is_equal_to(OidOf::Other(Oid::from_str(&commit_oid)?));
 
-    #[sealed_test]
-    fn should_error_on_unknown_rev() -> Result<()> {
-        let repo = git_init_no_gpg()?;
-        commit("chore: first commit")?;
-        commit("chore: other")?;
+    //     Ok(())
+    // }
 
-        let oid = repo.resolve_oid_of("v32");
+    // #[sealed_test]
+    // fn should_error_on_unknown_rev() -> Result<()> {
+    //     let repo = git_init_no_gpg()?;
+    //     commit("chore: first commit")?;
+    //     commit("chore: other")?;
 
-        assert_that!(oid).is_err();
+    //     let oid = repo.resolve_oid_of("v32");
 
-        Ok(())
-    }
+    //     assert_that!(oid).is_err();
+
+    //     Ok(())
+    // }
 
     #[sealed_test]
     fn convert_str_to_pattern_to() -> Result<()> {
         let repo = git_init_no_gpg()?;
         commit("chore: first commit")?;
-        commit("chore: v1")?;
+        let oid = commit("chore: v1")?;
         git_tag("1.0.0")?;
 
-        let pattern = repo.revspec_from_str("..1.0.0")?;
+        let pattern = RevSpec::parse("..1.0.0", &repo);
 
-        assert_that!(matches!(pattern, RevSpecPattern2::Range { .. })).is_true();
+        assert_that!(pattern).is_ok().is_equal_to(RevSpec {
+            from: None,
+            to: Some(Oid::from_str(&oid)?),
+        });
         Ok(())
     }
 
@@ -182,13 +145,16 @@ mod test {
     fn convert_str_to_pattern_from() -> Result<()> {
         let repo = git_init_no_gpg()?;
         commit("chore: first commit")?;
-        commit("chore: v1")?;
+        let oid = commit("chore: v1")?;
         git_tag("1.0.0")?;
         commit("chore: more commits")?;
 
-        let pattern = repo.revspec_from_str("1.0.0..")?;
+        let pattern = RevSpec::parse("1.0.0..", &repo);
 
-        assert_that!(matches!(pattern, RevSpecPattern2::Range { .. })).is_true();
+        assert_that!(pattern).is_ok().is_equal_to(RevSpec {
+            from: Some(Oid::from_str(&oid)?),
+            to: None,
+        });
         Ok(())
     }
 
@@ -196,20 +162,13 @@ mod test {
     fn convert_empty_pattern() -> Result<()> {
         let repo = git_init_no_gpg()?;
         commit("chore: first commit")?;
-        let pattern = repo.revspec_from_str("..")?;
-        assert_that!(matches!(pattern, RevSpecPattern2::Range { .. })).is_true();
-        Ok(())
-    }
 
-    #[sealed_test]
-    fn error_invalid_pattern() -> Result<()> {
-        let repo = git_init_no_gpg()?;
-        commit("chore: first commit")?;
-        commit("chore: v1")?;
-        git_tag("1.0.0")?;
-        let pattern = repo.revspec_from_str("1.0.0")?;
+        let pattern = RevSpec::parse("..", &repo);
 
-        assert_that!(matches!(pattern, RevSpecPattern2::AtTag { .. })).is_true();
+        assert_that!(pattern).is_ok().is_equal_to(RevSpec {
+            from: None,
+            to: None,
+        });
         Ok(())
     }
 
@@ -218,14 +177,52 @@ mod test {
         let repo = git_init_no_gpg()?;
         commit("chore: first commit")?;
         commit("chore: first commit")?;
-        commit("chore: v1")?;
+        let oid_1 = commit("chore: v1")?;
         git_tag("1.0.0")?;
-        commit("chore: more commits")?;
+        let oid_2 = commit("chore: more commits")?;
         git_tag("2.0.0")?;
 
-        let pattern = repo.revspec_from_str("1.0.0..2.0.0")?;
+        let pattern = RevSpec::parse("1.0.0..2.0.0", &repo);
 
-        assert_that!(matches!(pattern, RevSpecPattern2::Range { .. })).is_true();
+        assert_that!(pattern).is_ok().is_equal_to(RevSpec {
+            from: Some(Oid::from_str(&oid_1)?),
+            to: Some(Oid::from_str(&oid_2)?),
+        });
+        Ok(())
+    }
+
+    #[sealed_test]
+    fn revspec_at_tag_without_previous() -> Result<()> {
+        let repo = git_init_no_gpg()?;
+        commit("chore: first commit")?;
+        let oid = commit("chore: v1")?;
+        git_tag("1.0.0")?;
+
+        let pattern = RevSpec::parse("1.0.0", &repo);
+
+        assert_that!(pattern).is_ok().is_equal_to(RevSpec {
+            from: None,
+            to: Some(Oid::from_str(&oid)?),
+        });
+        Ok(())
+    }
+
+    #[sealed_test]
+    fn revspec_at_tag_with_previous() -> Result<()> {
+        let repo = git_init_no_gpg()?;
+        commit("chore: first commit")?;
+        commit("chore: first commit")?;
+        let oid_1 = commit("chore: v1")?;
+        git_tag("1.0.0")?;
+        let oid_2 = commit("chore: more commits")?;
+        git_tag("2.0.0")?;
+
+        let pattern = RevSpec::parse("2.0.0", &repo);
+
+        assert_that!(pattern).is_ok().is_equal_to(RevSpec {
+            from: Some(Oid::from_str(&oid_1)?),
+            to: Some(Oid::from_str(&oid_2)?),
+        });
         Ok(())
     }
 }

@@ -132,7 +132,7 @@ pub struct MonoRepoContext<'a> {
 #[derive(Debug, Serialize)]
 pub struct PackageBumpContext<'a> {
     pub package_name: &'a str,
-    pub package_path: &'a str,
+    pub package_path: String,
     pub version: OidOf,
     pub from: Option<OidOf>,
 }

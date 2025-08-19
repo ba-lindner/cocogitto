@@ -28,9 +28,9 @@ pub enum ReleaseType<'a> {
     Package(PackageContext<'a>),
 }
 
-impl Release<'_> {
-    pub fn into_markdown(
-        self,
+impl Release {
+    pub fn as_markdown(
+        &self,
         template: Template,
         context: ReleaseType,
     ) -> Result<String, tera::Error> {
@@ -46,7 +46,7 @@ impl Release<'_> {
     }
 
     pub fn write_to_file<S: AsRef<Path>>(
-        self,
+        &self,
         path: S,
         template: Template,
         kind: ReleaseType,
@@ -54,7 +54,7 @@ impl Release<'_> {
         let mut changelog_content = fs::read_to_string(path.as_ref())
             .unwrap_or_else(|_| [DEFAULT_HEADER, DEFAULT_FOOTER].join(""));
 
-        let changelog = self.into_markdown(template, kind)?;
+        let changelog = self.as_markdown(template, kind)?;
         let separator_idx = changelog_content.find(CHANGELOG_SEPARATOR);
 
         if let Some(idx) = separator_idx {

@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use cmd_lib::run_cmd;
 use cmd_lib::run_fun;
+use cocogitto::conventional::version::Increment;
 use sealed_test::prelude::*;
 use speculoos::prelude::*;
 
@@ -97,7 +98,7 @@ fn monorepo_bump_manual_ok() -> Result<()> {
 
     // Act
     let result = cocogitto.create_monorepo_version(BumpOptions {
-        increment: IncrementCommand::Major,
+        increment: IncrementCommand::Fixed(Increment::Major),
         ..Default::default()
     });
 
@@ -124,7 +125,7 @@ fn monorepo_bump_manual_disable_changelog_ok() -> Result<()> {
 
     // Act
     let result = cocogitto.create_monorepo_version(BumpOptions {
-        increment: IncrementCommand::Major,
+        increment: IncrementCommand::Fixed(Increment::Major),
         ..Default::default()
     });
 
@@ -738,6 +739,7 @@ fn bump_no_error_should_be_thrown_on_only_chore_docs_commit() -> Result<()> {
     cocogitto.clear_cache();
 
     cocogitto.create_monorepo_version(BumpOptions::default())?;
+    assert_tag_does_not_exist("jenkins-0.2.0")?;
 
     cocogitto.clear_cache();
 
@@ -747,6 +749,7 @@ fn bump_no_error_should_be_thrown_on_only_chore_docs_commit() -> Result<()> {
         increment: IncrementCommand::AutoPackage("jenkins".to_owned()),
         ..Default::default()
     })?;
+    assert_tag_does_not_exist("jenkins-0.2.0")?;
 
     run_cmd!(
         echo "more feat on thumbor" > thumbor/feat;

@@ -17,14 +17,14 @@ impl CocoGitto {
         range: Option<String>,
     ) -> Result<()> {
         let commit_range = if let Some(range) = range {
-            self.repository.revwalk(&range)?
+            self.repository.revwalk_old(&range)?
         } else if check_from_latest_tag {
             let tag = self
                 .repository
                 .get_latest_tag(TagLookUpOptions::default())?;
-            self.repository.revwalk(&format!("{tag}.."))?
+            self.repository.revwalk_old(&format!("{tag}.."))?
         } else {
-            self.repository.revwalk("..")?
+            self.repository.revwalk_old("..")?
         };
 
         let ignore_merge_commit_fn = |commit: &git2::Commit| commit.parent_count() <= 1;

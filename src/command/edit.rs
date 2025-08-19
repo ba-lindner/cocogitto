@@ -17,9 +17,9 @@ impl CocoGitto {
             let tag = self
                 .repository
                 .get_latest_tag(TagLookUpOptions::default())?;
-            self.repository.revwalk(&format!("{tag}.."))?
+            self.repository.revwalk_old(&format!("{tag}.."))?
         } else {
-            self.repository.revwalk("..")?
+            self.repository.revwalk_old("..")?
         };
 
         let editor = std::env::var("EDITOR")
