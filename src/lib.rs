@@ -1,3 +1,4 @@
+use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead};
@@ -191,8 +192,8 @@ impl CocoGitto {
     }
 
     // Currently only used in test to force rebuild the tag cache
-    pub fn clear_cache(&self) {
-        self.repository.get_cache().clear();
+    pub fn clear_cache(&mut self) {
+        self.repository.1 = OnceCell::new();
     }
 }
 

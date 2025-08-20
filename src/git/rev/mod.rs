@@ -1,56 +1,32 @@
-use git2::Commit;
+use git2::{Commit, Oid};
 
-use crate::git::{oid::OidOf, rev::cache::CommitInfo};
+use crate::git::{repository::Repository, rev::cache::CommitInfo};
 
 pub mod cache;
 pub mod filters;
 pub mod revspec;
 pub mod revwalk;
 
-#[derive(Debug)]
-pub struct CommitIterOld<'repo>(Vec<(OidOf, Commit<'repo>)>);
-
-impl CommitIterOld<'_> {
-    pub fn from_oid(&self) -> OidOf {
-        self.0.last().expect("non empty commit range").0.clone()
-    }
-
-    pub fn to_oid(&self) -> OidOf {
-        self.0.first().expect("non empty commit range").0.clone()
-    }
-
-    pub fn iter_commits(&self) -> impl Iterator<Item = &'_ Commit<'_>> {
-        self.0.iter().map(|(_, commit)| commit)
-    }
+#[derive(Debug, Clone)]
+pub struct CommitRange<'repo> {
+    pub commits: Vec<(Commit<'repo>, CommitInfo)>,
+    repository: &'repo Repository,
 }
 
-impl<'repo> IntoIterator for CommitIterOld<'repo> {
-    type Item = (OidOf, Commit<'repo>);
-    type IntoIter = std::vec::IntoIter<Self::Item>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-pub(crate) struct CommitIter<'repo>(pub Vec<(Commit<'repo>, CommitInfo)>);
-
-impl<'repo> IntoIterator for CommitIter<'repo> {
+impl<'repo> IntoIterator for CommitRange<'repo> {
     type Item = (Commit<'repo>, CommitInfo);
     type IntoIter = std::vec::IntoIter<Self::Item>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
+        self.commits.into_iter()
     }
 }
 
-impl<'repo> CommitIter<'repo> {
-    pub fn into_old(self, package: Option<&'_ str>) -> CommitIterOld<'repo> {
-        CommitIterOld(
-            self.into_iter()
-                .map(|(commit, info)| (info.as_oid_of(package), commit))
-                .collect(),
-        )
+impl<'repo> CommitRange<'repo> {
+    pub fn from(&self) -> CommitInfo {
+        self.commits
+            .last()
+            .map(|(_, info)| info.clone())
+            .unwrap_or(CommitInfo::new(Oid::zero()))
     }
 }

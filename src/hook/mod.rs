@@ -46,72 +46,47 @@ pub struct VersionSpan {
     default_version: Option<Version>,
 }
 
-#[derive(Debug)]
-pub(crate) struct HookVersion {
-    pub prefixed_tag: Tag,
-}
-
-impl HookVersion {
-    pub(crate) fn new(tag: Tag) -> Self {
-        HookVersion { prefixed_tag: tag }
-    }
-}
-
 impl Tag {
-    pub(crate) fn as_hook_version(&self) -> Option<HookVersion> {
-        if self.is_zero() {
-            None
-        } else {
-            Some(HookVersion::new(self.clone()))
-        }
+    pub fn filter_zero(&self) -> Option<&Self> {
+        (!self.is_zero()).then_some(self)
     }
 }
 
 impl VersionSpan {
-    pub(crate) fn build_version_str(
-        &mut self,
-        version: Option<&HookVersion>,
-        latest: Option<&HookVersion>,
-    ) -> Result<String> {
-        let default_tag = self.default_version.clone().map(|version| Tag {
-            package: None,
-            prefix: SETTINGS.tag_prefix.clone(),
-            version,
-            oid: None,
-        });
-
+    pub(crate) fn build_version_str(&mut self, version: &Tag, latest: &Tag) -> Result<String> {
         // According to the pest grammar, a `version` or `latest_version` token is expected first
-        let mut tag = match self.tokens.pop_front() {
-            Some(Token::Version) => version
-                .map(|version| version.prefixed_tag.clone())
-                .or(default_tag.clone())
-                .map(|tag| tag.strip_metadata())
-                .ok_or_else(|| anyhow!("No previous tag found to replace {{{{version}}}} version")),
-            Some(Token::LatestVersion) => latest
-                .map(|version| version.prefixed_tag.clone())
-                .or(default_tag.clone())
-                .map(|tag| tag.strip_metadata())
-                .ok_or_else(|| anyhow!("No previous tag found to replace {{{{latest}}}} version")),
-            Some(Token::LatestVersionTag) => latest
-                .map(|version| version.prefixed_tag.clone())
-                .or(default_tag.clone())
-                .ok_or_else(|| {
-                    anyhow!("No previous tag found to replace {{{{latest_tag}}}} version")
-                }),
-            Some(Token::VersionTag) => version
-                .map(|version| version.prefixed_tag.clone())
-                .or(default_tag.clone())
-                .ok_or_else(|| {
-                    anyhow!("No previous tag found to replace {{{{version_tag}}}} version")
-                }),
+        let (tag, strip_meta, err) = match self.tokens.pop_front() {
+            Some(Token::Version) => (version, true, "version"),
+            Some(Token::LatestVersion) => (latest, true, "latest"),
+            Some(Token::VersionTag) => (version, false, "version_tag"),
+            Some(Token::LatestVersionTag) => (latest, false, "latest_tag"),
             Some(Token::Package) => {
                 return version
-                    .and_then(|version| version.prefixed_tag.package.clone())
+                    .package
+                    .clone()
                     .ok_or_else(|| anyhow!("Current tag as no {{{{package}}}} info"))
             }
 
             _ => unreachable!("Unexpected parsing error"),
-        }?;
+        };
+
+        let mut tag = if tag.is_zero() {
+            self.default_version
+                .clone()
+                .map(|version| Tag {
+                    package: None,
+                    prefix: SETTINGS.tag_prefix.clone(),
+                    version,
+                    oid: None,
+                })
+                .ok_or_else(|| anyhow!("No previous tag found to replace {{{{{err}}}}} version"))?
+        } else {
+            tag.clone()
+        };
+        if strip_meta {
+            tag.prefix = None;
+            tag.package = None;
+        }
 
         let mut amount = 1;
         let mut version_access_token: Option<VersionAccessToken> = None;
@@ -162,11 +137,7 @@ pub struct HookSpan {
 }
 
 impl HookSpan {
-    fn replace_versions(
-        &mut self,
-        version: Option<&HookVersion>,
-        latest: Option<&HookVersion>,
-    ) -> Result<String> {
+    fn replace_versions(&mut self, version: &Tag, latest: &Tag) -> Result<String> {
         let mut output = self.content.clone();
         if let Some(mut span) = self.version_spans.pop() {
             let version_str = span.build_version_str(version, latest)?;
@@ -200,8 +171,8 @@ impl fmt::Display for Hook {
 impl Hook {
     pub(crate) fn insert_versions(
         &mut self,
-        current_version: Option<&HookVersion>,
-        next_version: Option<&HookVersion>,
+        current_version: &Tag,
+        next_version: &Tag,
     ) -> Result<()> {
         let mut parts = parser::parse(&self.0)?;
         self.0 = parts.replace_versions(next_version, current_version)?;
@@ -229,7 +200,7 @@ mod test {
 
     use crate::{Result, Tag};
 
-    use crate::hook::{Hook, HookVersion};
+    use crate::hook::Hook;
     use crate::settings::{MonoRepoPackage, Settings};
     use crate::test_helpers::git_init_no_gpg;
     use sealed_test::prelude::*;
@@ -266,7 +237,7 @@ mod test {
     #[test]
     fn replace_version_cargo() -> Result<()> {
         let mut hook = Hook::from_str("cargo bump {{version}}")?;
-        hook.insert_versions(None, Some(&HookVersion::new(Tag::from_str("1.0.0", None)?)))
+        hook.insert_versions(&Tag::default(), &Tag::from_str("1.0.0", None)?)
             .unwrap();
 
         assert_that!(hook.0.as_str()).is_equal_to("cargo bump 1.0.0");
@@ -283,8 +254,7 @@ mod test {
             oid: None,
         };
 
-        hook.insert_versions(None, Some(&HookVersion::new(tag)))
-            .unwrap();
+        hook.insert_versions(&Tag::default(), &tag).unwrap();
 
         assert_that!(hook.0.as_str()).is_equal_to("cargo bump v1.0.0");
         Ok(())
@@ -318,8 +288,7 @@ mod test {
             oid: None,
         };
 
-        hook.insert_versions(None, Some(&HookVersion::new(tag)))
-            .unwrap();
+        hook.insert_versions(&Tag::default(), &tag).unwrap();
 
         assert_that!(hook.0.as_str()).is_equal_to("echo cog-v1.0.0");
         Ok(())
@@ -335,8 +304,7 @@ mod test {
             oid: None,
         };
 
-        hook.insert_versions(Some(&HookVersion::new(tag)), None)
-            .unwrap();
+        hook.insert_versions(&tag, &Tag::default()).unwrap();
 
         assert_that!(hook.0.as_str()).is_equal_to("echo v1.0.0");
         Ok(())
@@ -345,7 +313,7 @@ mod test {
     #[test]
     fn replace_maven_version() -> Result<()> {
         let mut hook = Hook::from_str("mvn versions:set -DnewVersion={{version}}")?;
-        hook.insert_versions(None, Some(&HookVersion::new(Tag::from_str("1.0.0", None)?)))
+        hook.insert_versions(&Tag::default(), &Tag::from_str("1.0.0", None)?)
             .unwrap();
 
         assert_that!(hook.0.as_str()).is_equal_to("mvn versions:set -DnewVersion=1.0.0");
@@ -355,7 +323,7 @@ mod test {
     #[test]
     fn replace_maven_version_with_expression() -> Result<()> {
         let mut hook = Hook::from_str("mvn versions:set -DnewVersion={{version+1minor-SNAPSHOT}}")?;
-        hook.insert_versions(None, Some(&HookVersion::new(Tag::from_str("1.0.0", None)?)))
+        hook.insert_versions(&Tag::default(), &Tag::from_str("1.0.0", None)?)
             .unwrap();
 
         assert_that!(hook.0.as_str()).is_equal_to("mvn versions:set -DnewVersion=1.1.0-SNAPSHOT");
@@ -373,8 +341,7 @@ mod test {
             oid: None,
         };
 
-        hook.insert_versions(None, Some(&HookVersion::new(tag)))
-            .unwrap();
+        hook.insert_versions(&Tag::default(), &tag).unwrap();
 
         assert_that!(hook.0.as_str()).is_equal_to("mvn versions:set -DnewVersion=v1.1.0-SNAPSHOT");
         Ok(())
@@ -409,8 +376,7 @@ mod test {
             oid: None,
         };
 
-        hook.insert_versions(None, Some(&HookVersion::new(tag)))
-            .unwrap();
+        hook.insert_versions(&Tag::default(), &tag).unwrap();
 
         assert_that!(hook.0.as_str())
             .is_equal_to("mvn versions:set -DnewVersion=cog-v1.1.0-SNAPSHOT");
@@ -420,7 +386,7 @@ mod test {
     #[test]
     fn leave_hook_untouched_when_no_version() -> Result<()> {
         let mut hook = Hook::from_str("echo \"Hello World\"")?;
-        hook.insert_versions(None, Some(&HookVersion::new(Tag::from_str("1.0.0", None)?)))
+        hook.insert_versions(&Tag::default(), &Tag::from_str("1.0.0", None)?)
             .unwrap();
 
         assert_that!(hook.0.as_str()).is_equal_to("echo \"Hello World\"");
@@ -430,7 +396,7 @@ mod test {
     #[test]
     fn replace_quoted_version() -> Result<()> {
         let mut hook = Hook::from_str("echo \"{{version}}\"")?;
-        hook.insert_versions(None, Some(&HookVersion::new(Tag::from_str("1.0.0", None)?)))
+        hook.insert_versions(&Tag::default(), &Tag::from_str("1.0.0", None)?)
             .unwrap();
 
         assert_that!(hook.0.as_str()).is_equal_to("echo \"1.0.0\"");
@@ -441,7 +407,7 @@ mod test {
     fn replace_version_with_nested_simple_quoted_arg() -> Result<()> {
         let mut hook =
             Hook::from_str("cog commit chore 'bump snapshot to {{version+1minor-pre}}'")?;
-        hook.insert_versions(None, Some(&HookVersion::new(Tag::from_str("1.0.0", None)?)))
+        hook.insert_versions(&Tag::default(), &Tag::from_str("1.0.0", None)?)
             .unwrap();
 
         assert_that!(hook.0.as_str()).is_equal_to("cog commit chore 'bump snapshot to 1.1.0-pre'");
@@ -452,7 +418,7 @@ mod test {
     fn replace_version_with_nested_double_quoted_arg() -> Result<()> {
         let mut hook =
             Hook::from_str("cog commit chore \"bump snapshot to {{version+1minor-pre}}\"")?;
-        hook.insert_versions(None, Some(&HookVersion::new(Tag::from_str("1.0.0", None)?)))
+        hook.insert_versions(&Tag::default(), &Tag::from_str("1.0.0", None)?)
             .unwrap();
 
         assert_that!(hook.0.as_str())
@@ -464,8 +430,8 @@ mod test {
     fn replace_version_with_multiple_placeholders() -> Result<()> {
         let mut hook = Hook::from_str("echo \"the latest {{latest}}, the greatest {{version}}\"")?;
         hook.insert_versions(
-            Some(&HookVersion::new(Tag::from_str("0.5.9", None)?)),
-            Some(&HookVersion::new(Tag::from_str("1.0.0", None)?)),
+            &Tag::from_str("0.5.9", None)?,
+            &Tag::from_str("1.0.0", None)?,
         )
         .unwrap();
 
@@ -479,8 +445,8 @@ mod test {
             "echo \"the latest {{latest+3major+1minor}}, the greatest {{version+2patch}}\"",
         )?;
         hook.insert_versions(
-            Some(&HookVersion::new(Tag::from_str("0.5.9", None)?)),
-            Some(&HookVersion::new(Tag::from_str("1.0.0", None)?)),
+            &Tag::from_str("0.5.9", None)?,
+            &Tag::from_str("1.0.0", None)?,
         )
         .unwrap();
 
@@ -492,7 +458,7 @@ mod test {
     fn replace_version_with_pre_and_build_metadata() -> Result<()> {
         let mut hook =
             Hook::from_str("echo \"the latest {{version+1major-pre.alpha-bravo+build.42}}\"")?;
-        hook.insert_versions(None, Some(&HookVersion::new(Tag::from_str("1.0.0", None)?)))
+        hook.insert_versions(&Tag::default(), &Tag::from_str("1.0.0", None)?)
             .unwrap();
 
         assert_that!(hook.0.as_str())
@@ -503,7 +469,8 @@ mod test {
     #[test]
     fn replaces_version_with_default_when_no_version_available() -> Result<()> {
         let mut hook = Hook::from_str("echo \"the latest {{version|1.0.0}}\"")?;
-        hook.insert_versions(None, None).unwrap();
+        hook.insert_versions(&Tag::default(), &Tag::default())
+            .unwrap();
 
         assert_that!(hook.0.as_str()).is_equal_to("echo \"the latest 1.0.0\"");
         Ok(())
@@ -514,7 +481,8 @@ mod test {
         let mut hook = Hook::from_str(
             "echo \"the latest {{version|1.0.0+1major-pre.alpha-bravo+build.42}}\"",
         )?;
-        hook.insert_versions(None, None).unwrap();
+        hook.insert_versions(&Tag::default(), &Tag::default())
+            .unwrap();
 
         assert_that!(hook.0.as_str())
             .is_equal_to("echo \"the latest 2.0.0-pre.alpha-bravo+build.42\"");
@@ -536,7 +504,8 @@ mod test {
         )?;
 
         let mut hook = Hook::from_str("echo \"the latest {{version_tag|1.0.0}}\"")?;
-        hook.insert_versions(None, None).unwrap();
+        hook.insert_versions(&Tag::default(), &Tag::default())
+            .unwrap();
 
         assert_that!(hook.0.as_str()).is_equal_to("echo \"the latest v1.0.0\"");
         Ok(())
@@ -554,8 +523,7 @@ mod test {
             oid: None,
         };
 
-        hook.insert_versions(None, Some(&HookVersion::new(tag)))
-            .unwrap();
+        hook.insert_versions(&Tag::default(), &tag).unwrap();
 
         assert_that!(hook.0.as_str())
             .is_equal_to("echo \"the latest v2.0.0-pre.alpha-bravo+build.42\"");
@@ -569,7 +537,7 @@ mod test {
 
         let mut hook = Hook::from_str("git commit --allow-empty -m 'chore(snapshot): bump snapshot to {{version+1patch-SNAPSHOT}}'")?;
 
-        hook.insert_versions(None, Some(&HookVersion::new(Tag::from_str("1.0.0", None)?)))
+        hook.insert_versions(&Tag::default(), &Tag::from_str("1.0.0", None)?)
             .unwrap();
 
         let outcome = hook.run(None);
@@ -615,11 +583,7 @@ mod test {
             oid: None,
         };
 
-        hook.insert_versions(
-            Some(&HookVersion::new(current)),
-            Some(&HookVersion::new(tag)),
-        )
-        .unwrap();
+        hook.insert_versions(&current, &tag).unwrap();
 
         assert_that!(hook.0.as_str())
             .is_equal_to(r#"echo "cog, version: 1.1.0, tag: cog-v1.1.0, current: 1.0.0, current_tag: cog-v1.0.0""#);
@@ -663,11 +627,7 @@ mod test {
             oid: None,
         };
 
-        hook.insert_versions(
-            Some(&HookVersion::new(current)),
-            Some(&HookVersion::new(tag)),
-        )
-        .unwrap();
+        hook.insert_versions(&current, &tag).unwrap();
 
         assert_that!(hook.0.as_str()).is_equal_to(r#"major=1 minor=2 patch=3"#);
         Ok(())

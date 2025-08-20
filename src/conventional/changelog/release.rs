@@ -1,10 +1,11 @@
 use chrono::{NaiveDateTime, Utc};
 use conventional_commit_parser::commit::Footer;
+use git2::Oid;
 use serde::Serialize;
 
 use crate::conventional::commit::Commit;
 use crate::git::rev::cache::CommitInfo;
-use crate::git::rev::CommitIter;
+use crate::git::rev::CommitRange;
 use crate::settings;
 use colored::Colorize;
 
@@ -20,19 +21,26 @@ pub struct Release {
     pub previous: Option<Box<Release>>,
 }
 
-impl TryFrom<CommitIter<'_>> for Release {
+impl Release {
+    pub fn empty() -> Self {
+        Self {
+            version: CommitInfo::new(Oid::zero()),
+            from: CommitInfo::new(Oid::zero()),
+            date: Utc::now().naive_local(),
+            commits: Vec::new(),
+            previous: None,
+        }
+    }
+}
+
+impl TryFrom<CommitRange<'_>> for Release {
     type Error = ChangelogError;
 
-    fn try_from(mut commits: CommitIter<'_>) -> Result<Self, Self::Error> {
-        commits.0.reverse();
-        let from = commits
-            .0
-            .first()
-            .ok_or(ChangelogError::EmptyRelease)?
-            .1
-            .clone();
-        commits
-            .0
+    fn try_from(mut range: CommitRange<'_>) -> Result<Self, Self::Error> {
+        let from = range.from();
+        range.commits.reverse();
+        range
+            .commits
             .split_inclusive(|(_, info)| !info.tags.is_empty())
             .filter_map(|commits| {
                 let version = &commits.last()?.1;
@@ -112,7 +120,6 @@ mod test {
         MonoRepoContext, PackageBumpContext, PackageContext, RemoteContext, Template, TemplateKind,
     };
     use crate::conventional::commit::Commit;
-    use crate::git::oid::OidOf;
     use crate::git::repository::Repository;
 
     use crate::git::rev::cache::CommitInfo;
@@ -539,11 +546,11 @@ mod test {
                 PackageBumpContext {
                     package_name: "one",
                     package_path: "crates/one".to_string(),
-                    version: OidOf::Tag(Tag::from_str(
+                    version: CommitInfo::from_tag(&Tag::from_str(
                         "0.1.0",
                         Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
                     )?),
-                    from: Some(OidOf::Tag(Tag::from_str(
+                    from: Some(CommitInfo::from_tag(&Tag::from_str(
                         "0.2.0",
                         Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
                     )?)),
@@ -551,11 +558,11 @@ mod test {
                 PackageBumpContext {
                     package_name: "two",
                     package_path: "crates/two".to_string(),
-                    version: OidOf::Tag(Tag::from_str(
+                    version: CommitInfo::from_tag(&Tag::from_str(
                         "0.2.0",
                         Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
                     )?),
-                    from: Some(OidOf::Tag(Tag::from_str(
+                    from: Some(CommitInfo::from_tag(&Tag::from_str(
                         "0.3.0",
                         Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
                     )?)),
@@ -573,7 +580,7 @@ mod test {
                 PackageBumpContext {
                     package_name: "one",
                     package_path: "crates/one".to_string(),
-                    version: OidOf::Tag(Tag::from_str(
+                    version: CommitInfo::from_tag(&Tag::from_str(
                         "0.1.0",
                         Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
                     )?),
@@ -582,7 +589,7 @@ mod test {
                 PackageBumpContext {
                     package_name: "two",
                     package_path: "crates/two".to_string(),
-                    version: OidOf::Tag(Tag::from_str(
+                    version: CommitInfo::from_tag(&Tag::from_str(
                         "0.2.0",
                         Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
                     )?),

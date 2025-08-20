@@ -1,13 +1,11 @@
 use git2::Oid;
 
 use crate::git::error::Git2Error;
-use crate::git::oid::OidOf;
 use crate::git::repository::Repository;
 use crate::git::tag::Tag;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt::Display;
-use std::sync::MutexGuard;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitInfo {
@@ -19,8 +17,12 @@ pub struct CommitInfo {
 
 impl Display for CommitInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(tag) = self.tags.first() {
+        if let Some(tag) = self.tags.iter().find(|tag| tag.package.is_none()) {
             tag.fmt(f)
+        } else if let Some(tag) = self.tags.first() {
+            tag.fmt(f)
+        } else if self.is_head {
+            f.write_str("HEAD")
         } else {
             self.oid.fmt(f)
         }
@@ -45,19 +47,6 @@ impl CommitInfo {
             tags: vec![tag.clone()],
         }
     }
-
-    pub fn as_oid_of(&self, package: Option<&str>) -> OidOf {
-        let tag = self
-            .tags
-            .iter()
-            .find(|tag| tag.package.as_deref() == package);
-        match tag {
-            Some(tag) => OidOf::Tag(tag.clone()),
-            None if self.is_first => OidOf::FirstCommit(self.oid),
-            None if self.is_head => OidOf::Head(self.oid),
-            None => OidOf::Other(self.oid),
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -80,24 +69,14 @@ impl RepoCache {
         }
     }
 
-    pub fn clear(&mut self) {
-        self.head = Oid::zero();
-        self.first = Oid::zero();
-        self.refs.clear();
-        self.commits.clear();
-        self.tags.clear();
-    }
+    fn build(repo: &Repository) -> Result<Self, Git2Error> {
+        let mut res = Self::empty();
 
-    fn is_empty(&self) -> bool {
-        self.refs.is_empty() && self.commits.is_empty()
-    }
+        res.head = repo.get_head_commit_oid()?;
+        res.insert_oid(res.head).is_head = true;
 
-    fn fill(&mut self, repo: &Repository) -> Result<(), Git2Error> {
-        self.head = repo.get_head_commit_oid()?;
-        self.insert_oid(self.head).is_head = true;
-
-        self.first = repo.get_first_commit()?;
-        self.insert_oid(self.first).is_first = true;
+        res.first = repo.get_first_commit()?;
+        res.insert_oid(res.first).is_first = true;
 
         let tags = repo.0.tag_names(None)?;
         let tags = tags
@@ -105,12 +84,12 @@ impl RepoCache {
             .flatten()
             .filter_map(|tag| repo.resolve_tag(tag));
         for (name, oid, tag) in tags {
-            self.insert_oid(oid).tags.push(tag.clone());
-            self.tags.push(tag);
-            self.refs.insert(name.to_string(), oid);
+            res.insert_oid(oid).tags.push(tag.clone());
+            res.tags.push(tag);
+            res.refs.insert(name.to_string(), oid);
         }
 
-        Ok(())
+        Ok(res)
     }
 
     fn insert_oid(&mut self, oid: Oid) -> &mut CommitInfo {
@@ -131,12 +110,9 @@ impl RepoCache {
 }
 
 impl Repository {
-    pub fn get_cache(&self) -> MutexGuard<'_, RepoCache> {
-        let mut cache = self.1.lock().unwrap();
-        if cache.is_empty() {
-            cache.fill(self).expect("failed to construct tag cache");
-        }
-        cache
+    pub fn get_cache(&self) -> &RepoCache {
+        self.1
+            .get_or_init(|| RepoCache::build(self).expect("failed to build cache"))
     }
 
     /// get commit oid from revspec
@@ -191,7 +167,7 @@ mod test {
     fn init_cache_ok() -> anyhow::Result<()> {
         let repo = Repository::open(".")?;
         let cache = repo.get_cache();
-        assert_that!(cache.is_empty()).is_false();
+        assert_that!(cache.refs.is_empty()).is_false();
         Ok(())
     }
 

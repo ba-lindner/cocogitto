@@ -8,13 +8,12 @@ use crate::git::rev::filters::CommitRangeFilter;
 use crate::git::rev::revspec::RevSpec;
 use crate::git::rev::revwalk::RevwalkCache;
 use crate::git::tag::{Tag, TagLookUpOptions};
-use crate::hook::{Hook, HookVersion, Hooks};
+use crate::hook::{Hook, Hooks};
 use crate::settings::{HookType, MonoRepoPackage, Settings};
 use crate::BumpError;
 use crate::{CocoGitto, COMMITS_METADATA, SETTINGS};
 use anyhow::Result;
 use anyhow::{bail, ensure, Context};
-use chrono::Utc;
 use colored::Colorize;
 use conventional_commit_parser::commit::CommitType;
 use globset::Glob;
@@ -60,15 +59,18 @@ pub struct PackageBumpOptions<'a> {
     pub disable_bump_commit: bool,
 }
 
-struct BumpResult {
+#[derive(Debug)]
+struct BumpData {
     current: Tag,
     next: Tag,
     release: Release,
 }
 
-impl BumpResult {
-    fn no_change(&self) -> bool {
-        self.current.version == self.next.version
+impl BumpData {
+    fn increment(&self) -> Increment {
+        self.next
+            .get_increment_from(&self.current)
+            .unwrap_or(Increment::NoBump)
     }
 }
 
@@ -86,72 +88,6 @@ impl<'a> PackageBumpOptions<'a> {
             skip_untracked: self.skip_untracked,
             disable_bump_commit: self.disable_bump_commit,
         }
-    }
-}
-
-struct HookRunOptions<'a> {
-    hook_type: HookType,
-    current_tag: Option<&'a HookVersion>,
-    next_version: Option<&'a HookVersion>,
-    hook_profile: Option<&'a str>,
-    package_name: Option<&'a str>,
-    package: Option<&'a MonoRepoPackage>,
-}
-
-impl<'a> HookRunOptions<'a> {
-    pub fn post_bump() -> Self {
-        Self {
-            hook_type: HookType::PostBump,
-            current_tag: None,
-            next_version: None,
-            hook_profile: None,
-            package_name: None,
-            package: None,
-        }
-    }
-
-    pub fn pre_bump() -> Self {
-        Self {
-            hook_type: HookType::PreBump,
-            current_tag: None,
-            next_version: None,
-            hook_profile: None,
-            package_name: None,
-            package: None,
-        }
-    }
-
-    pub fn current_tag<'b>(mut self, version: Option<&'b HookVersion>) -> Self
-    where
-        'b: 'a,
-    {
-        self.current_tag = version;
-        self
-    }
-
-    pub fn next_version<'b>(mut self, version: &'b HookVersion) -> Self
-    where
-        'b: 'a,
-    {
-        self.next_version = Some(version);
-        self
-    }
-
-    pub fn hook_profile<'b>(mut self, profile: Option<&'b str>) -> Self
-    where
-        'b: 'a,
-    {
-        self.hook_profile = profile;
-        self
-    }
-
-    pub fn package<'b>(mut self, name: &'b str, package: &'b MonoRepoPackage) -> Self
-    where
-        'b: 'a,
-    {
-        self.package_name = Some(name);
-        self.package = Some(package);
-        self
     }
 }
 
@@ -224,14 +160,20 @@ impl CocoGitto {
         filter: CommitRangeFilter<'_>,
         cache: Option<&'_ mut RevwalkCache<'c>>,
         allow_empty: bool,
-    ) -> Result<BumpResult> {
+    ) -> Result<BumpData> {
         let tag_opts = match filter {
             CommitRangeFilter::Package(pkg) => TagLookUpOptions::package(pkg),
             _ => TagLookUpOptions::default(),
         };
         let current = match self.repository.get_latest_tag(tag_opts) {
             Ok(tag) => tag,
-            Err(TagError::NoTag) => Tag::default(),
+            Err(TagError::NoTag) => {
+                let mut fallback = Tag::default();
+                if let CommitRangeFilter::Package(pkg) = filter {
+                    fallback.package = Some(pkg.to_string());
+                }
+                fallback
+            }
             Err(other) => bail!(other),
         };
         let current_prerelease = self
@@ -240,40 +182,38 @@ impl CocoGitto {
             .ok()
             .filter(|tag| *tag > current);
 
-        let spec = RevSpec {
-            from: current.oid,
-            to: None,
-        };
-        let mut iter = if let Some(cache) = cache {
+        let spec = RevSpec::from_tag(&current);
+        let mut range = if let Some(cache) = cache {
             self.repository.revwalk_cached(&spec, cache)?
         } else {
             self.repository.revwalk(&spec)?
         };
-        iter.apply_ignore_settings();
+        range.apply_ignore_settings();
+        // ugly workaround
+        // the below combination of parameters is only used for the global tag in monorepos
+        // if SETTINGS.generate_mono_repository_package_tags is not set
+        // in this special case, the release (built from `range`) contains only global commits,
+        // while the bump has to consider all commits
+        // so in this case, we need to apply the filter after bumping
+        // I know this isn't clean, pls don't bother me about it
+        // Also, I consider the current behaviour to be a bug; I don't think that disabling
+        // tag generation should make cog ignore the `package.public_api` setting
         let filter_after_increment =
             opts.increment == IncrementCommand::Auto && filter == CommitRangeFilter::Global;
         if !filter_after_increment {
-            iter.filter(&self.repository, filter)?;
+            range.filter(filter)?;
         }
-        let hist_increment = iter.get_increment(current.version.major == 0);
-        let hist_increment = if allow_empty {
-            hist_increment.unwrap_or(Increment::NoBump)
-        } else {
-            hist_increment?
+        let mut next = match current.bump(&opts.increment, &range) {
+            Ok(tag) => tag,
+            Err(crate::conventional::error::BumpError::NoCommitFound) if allow_empty => {
+                current.clone().reset_metadata()
+            }
+            Err(other) => bail!(other),
         };
+
         if filter_after_increment {
-            iter.filter(&self.repository, filter)?;
+            range.filter(filter)?;
         }
-        let mut next = match &opts.increment {
-            IncrementCommand::Auto | IncrementCommand::AutoPackage(_) => {
-                current.bump_fixed(hist_increment)
-            }
-            IncrementCommand::Fixed(increment) => current.bump_fixed(*increment),
-            IncrementCommand::AutoMonoRepoGlobal(pkg_increment) => {
-                current.bump_fixed(hist_increment.max(pkg_increment.unwrap_or(Increment::NoBump)))
-            }
-            IncrementCommand::Manual(version) => current.manual_bump(version)?,
-        };
 
         // if prerelease exists, ensure the new tag is not smaller
         if let Some(pre_release) = &current_prerelease {
@@ -302,33 +242,39 @@ impl CocoGitto {
             );
         }
 
-        let release = Release::try_from(iter);
+        let release = Release::try_from(range);
         let mut release = if allow_empty {
-            release.unwrap_or_else(|_| Release {
-                version: CommitInfo::from_tag(&next),
-                from: CommitInfo::from_tag(&current),
-                date: Utc::now().naive_local(),
-                commits: Vec::new(),
-                previous: None,
+            release.unwrap_or_else(|_| {
+                let mut rel = Release::empty();
+                rel.from = CommitInfo::from_tag(&current);
+                rel
             })
         } else {
             release?
         };
         release.version = CommitInfo::from_tag(&next);
 
-        Ok(BumpResult {
+        Ok(BumpData {
             current,
             next,
             release,
         })
     }
 
-    fn run_hooks(&self, options: HookRunOptions) -> Result<()> {
+    fn run_hooks(
+        &self,
+        hook_type: HookType,
+        bump: &BumpData,
+        hook_profile: Option<&str>,
+        package: Option<(&str, &MonoRepoPackage)>,
+    ) -> Result<()> {
+        let (package_name, package) = package.unzip();
+
         let settings = Settings::get(&self.repository)?;
 
-        let hooks: Vec<Hook> = match (options.package, options.hook_profile) {
+        let hooks: Vec<Hook> = match (package, hook_profile) {
             (None, Some(profile)) => settings
-                .get_profile_hooks(profile, options.hook_type)
+                .get_profile_hooks(profile, hook_type)
                 .iter()
                 .map(|s| s.parse())
                 .enumerate()
@@ -340,7 +286,7 @@ impl CocoGitto {
                 .try_collect()?,
 
             (Some(package), Some(profile)) => {
-                let hooks = package.get_profile_hooks(profile, options.hook_type);
+                let hooks = package.get_profile_hooks(profile, hook_type);
 
                 hooks
                     .iter()
@@ -354,14 +300,14 @@ impl CocoGitto {
                     .try_collect()?
             }
             (Some(package), None) => package
-                .get_hooks(options.hook_type)
+                .get_hooks(hook_type)
                 .iter()
                 .map(|s| s.parse())
                 .enumerate()
                 .map(|(idx, result)| result.context(format!("Cannot parse hook at index {idx}")))
                 .try_collect()?,
             (None, None) => settings
-                .get_hooks(options.hook_type)
+                .get_hooks(hook_type)
                 .iter()
                 .map(|s| s.parse())
                 .enumerate()
@@ -370,12 +316,12 @@ impl CocoGitto {
         };
 
         if !hooks.is_empty() {
-            let hook_type = match options.hook_type {
+            let hook_type = match hook_type {
                 HookType::PreBump => "pre-bump",
                 HookType::PostBump => "post-bump",
             };
 
-            match options.package_name {
+            match package_name {
                 None => {
                     let msg = format!("[{hook_type}]").underline().white().bold();
                     info!("{msg}")
@@ -391,7 +337,7 @@ impl CocoGitto {
         }
 
         for mut hook in hooks {
-            hook.insert_versions(options.current_tag, options.next_version)?;
+            hook.insert_versions(&bump.current, &bump.next)?;
             let command = hook.to_string();
             let command = if command.chars().count() > 78 {
                 &command[0..command.len()]
@@ -399,7 +345,7 @@ impl CocoGitto {
                 &command
             };
             info!("[{command}]");
-            let package_path = options.package.map(|p| p.path.as_path());
+            let package_path = package.map(|p| p.path.as_path());
             hook.run(package_path).context(hook.to_string())?;
             println!();
         }

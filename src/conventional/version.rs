@@ -7,7 +7,6 @@ pub enum IncrementCommand {
     #[default]
     Auto,
     Fixed(Increment),
-    AutoPackage(String),
     AutoMonoRepoGlobal(Option<Increment>),
     Manual(String),
 }

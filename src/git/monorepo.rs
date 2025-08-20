@@ -60,11 +60,10 @@ mod test {
         )?;
 
         // Act
-        let mut range = repo.revwalk_pattern("..HEAD")?;
-        range.retain_package(&repo, "two")?;
+        let range = repo.revwalk_pattern("..HEAD")?.package("two")?;
 
         // Assert
-        assert_that!(range.0).has_length(2);
+        assert_that!(range.commits).has_length(2);
 
         Ok(())
     }

@@ -1,5 +1,5 @@
+use std::cell::OnceCell;
 use std::path::Path;
-use std::sync::Mutex;
 use std::{
     fmt::{Debug, Formatter},
     path::PathBuf,
@@ -9,7 +9,7 @@ use crate::git::error::Git2Error;
 use crate::git::rev::cache::RepoCache;
 use git2::{Commit as Git2Commit, IndexAddOption, Oid, Repository as Git2Repository};
 
-pub(crate) struct Repository(pub(crate) Git2Repository, pub(super) Mutex<RepoCache>);
+pub(crate) struct Repository(pub(crate) Git2Repository, pub(crate) OnceCell<RepoCache>);
 
 impl Repository {
     pub(crate) fn signing_key(&self) -> Result<String, Git2Error> {
@@ -71,7 +71,7 @@ impl Repository {
     }
 
     fn new(raw: Git2Repository) -> Self {
-        Self(raw, Mutex::new(RepoCache::empty()))
+        Self(raw, OnceCell::new())
     }
 
     pub(crate) fn init<S: AsRef<Path> + ?Sized>(path: &S) -> Result<Repository, Git2Error> {

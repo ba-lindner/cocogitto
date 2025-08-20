@@ -173,7 +173,6 @@ fn package_bump_ok() -> Result<()> {
     let result = cocogitto.create_package_version(PackageBumpOptions {
         package_name: "one",
         package,
-        increment: IncrementCommand::AutoPackage("one".to_string()),
         ..Default::default()
     });
 
@@ -238,7 +237,6 @@ fn consecutive_package_bump_ok() -> Result<()> {
     cocogitto.create_package_version(PackageBumpOptions {
         package_name: "thumbor",
         package: &thumbor(),
-        increment: IncrementCommand::AutoPackage("thumbor".to_owned()),
         ..Default::default()
     })?;
 
@@ -247,7 +245,6 @@ fn consecutive_package_bump_ok() -> Result<()> {
     cocogitto.create_package_version(PackageBumpOptions {
         package_name: "jenkins",
         package: &jenkins(),
-        increment: IncrementCommand::AutoPackage("jenkins".to_owned()),
         ..Default::default()
     })?;
 
@@ -262,7 +259,6 @@ fn consecutive_package_bump_ok() -> Result<()> {
     cocogitto.create_package_version(PackageBumpOptions {
         package_name: "jenkins",
         package: &jenkins(),
-        increment: IncrementCommand::AutoPackage("jenkins".to_owned()),
         ..Default::default()
     })?;
 
@@ -746,7 +742,6 @@ fn bump_no_error_should_be_thrown_on_only_chore_docs_commit() -> Result<()> {
     cocogitto.create_package_version(PackageBumpOptions {
         package_name: "jenkins",
         package: &jenkins(),
-        increment: IncrementCommand::AutoPackage("jenkins".to_owned()),
         ..Default::default()
     })?;
     assert_tag_does_not_exist("jenkins-0.2.0")?;
@@ -862,7 +857,6 @@ fn error_on_no_conventional_commits_found_for_package() -> Result<()> {
     let first_result = cocogitto.create_package_version(PackageBumpOptions {
         package_name: "jenkins",
         package: &jenkins(),
-        increment: IncrementCommand::AutoPackage("jenkins".to_owned()),
         ..Default::default()
     });
 
@@ -877,7 +871,6 @@ fn error_on_no_conventional_commits_found_for_package() -> Result<()> {
     let second_result = cocogitto.create_package_version(PackageBumpOptions {
         package_name: "jenkins",
         package: &jenkins(),
-        increment: IncrementCommand::AutoPackage("jenkins".to_owned()),
         ..Default::default()
     });
 

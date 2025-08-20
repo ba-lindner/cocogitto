@@ -1,9 +1,10 @@
-use crate::command::bump::{HookRunOptions, PackageBumpOptions};
+use crate::command::bump::PackageBumpOptions;
 use crate::conventional::changelog::template::PackageContext;
 use crate::conventional::changelog::ReleaseType;
+use crate::conventional::version::Increment;
 use crate::git::rev::filters::CommitRangeFilter;
 use crate::git::tag::Tag;
-use crate::hook::HookVersion;
+use crate::settings::HookType;
 use crate::{CocoGitto, SETTINGS};
 use anyhow::Result;
 use colored::*;
@@ -14,57 +15,39 @@ impl CocoGitto {
     pub fn create_package_version(&mut self, opts: PackageBumpOptions) -> Result<()> {
         self.pre_bump_checks(opts.skip_untracked)?;
 
-        let bump_res = self.get_next_version(
+        let bump = self.get_next_version(
             &opts.common(),
             CommitRangeFilter::Package(opts.package_name),
             None,
             false,
         )?;
-        if bump_res.no_change() {
+        if bump.increment() == Increment::NoBump {
             print!("No conventional commits found for {} that required a bump. Changelog will be updated on the next bump.\nPre-Hooks and Post-Hooks have been skipped.\n", opts.package_name);
             return Ok(());
         }
 
-        let tag = Tag::create(
-            bump_res.next.version.clone(),
-            Some(opts.package_name.to_string()),
-        );
-
         if opts.dry_run {
-            print!("{tag}");
+            print!("{}", bump.next);
             return Ok(());
         }
 
         if !SETTINGS.disable_changelog {
-            let changelog = bump_res.release;
-
-            changelog.pretty_print_bump_summary()?;
+            bump.release.pretty_print_bump_summary()?;
 
             let path = opts.package.changelog_path();
             let template = SETTINGS.get_package_changelog_template()?;
             let additional_context = ReleaseType::Package(PackageContext {
                 package_name: opts.package_name,
             });
-            changelog.write_to_file(path, template, additional_context)?;
+            bump.release
+                .write_to_file(path, template, additional_context)?;
         }
 
-        let current = self
-            .repository
-            .get_latest_package_tag(opts.package_name)
-            .map(HookVersion::new)
-            .ok();
-
-        let next_version = HookVersion::new(Tag::create(
-            bump_res.next.version,
-            Some(opts.package_name.to_string()),
-        ));
-
         let hook_result = self.run_hooks(
-            HookRunOptions::pre_bump()
-                .current_tag(current.as_ref())
-                .next_version(&next_version)
-                .hook_profile(opts.hooks_config)
-                .package(opts.package_name, opts.package),
+            HookType::PreBump,
+            &bump,
+            opts.hooks_config,
+            Some((opts.package_name, opts.package)),
         );
 
         self.repository.add_all()?;
@@ -78,39 +61,36 @@ impl CocoGitto {
             if opts.skip_ci || opts.skip_ci_override.is_some() {
                 let skip_ci_pattern = opts.skip_ci_override.unwrap_or(SETTINGS.skip_ci.clone());
                 self.repository.commit(
-                    &format!("chore(version): {tag} {skip_ci_pattern}"),
+                    &format!("chore(version): {} {skip_ci_pattern}", bump.next),
                     sign,
                     true,
                 )?;
             } else {
                 self.repository
-                    .commit(&format!("chore(version): {tag}"), sign, true)?;
+                    .commit(&format!("chore(version): {}", bump.next), sign, true)?;
             }
         }
 
         if let Some(msg_tmpl) = opts.annotated {
             let mut context = tera::Context::new();
-            context.insert("latest", &bump_res.current.version.to_string());
-            context.insert("version", &tag.version.to_string());
+            context.insert("latest", &bump.current.version.to_string());
+            context.insert("version", &bump.next.version.to_string());
             let msg = Tera::one_off(&msg_tmpl, &context, false)?;
             self.repository
-                .create_annotated_tag(&tag, &msg, disable_bump_commit)?;
+                .create_annotated_tag(&bump.next, &msg, disable_bump_commit)?;
         } else {
-            self.repository.create_tag(&tag, disable_bump_commit)?;
+            self.repository
+                .create_tag(&bump.next, disable_bump_commit)?;
         }
 
         self.run_hooks(
-            HookRunOptions::post_bump()
-                .current_tag(current.as_ref())
-                .next_version(&next_version)
-                .hook_profile(opts.hooks_config)
-                .package(opts.package_name, opts.package),
+            HookType::PostBump,
+            &bump,
+            opts.hooks_config,
+            Some((opts.package_name, opts.package)),
         )?;
 
-        let current = current
-            .map(|current| current.prefixed_tag.to_string())
-            .unwrap_or_else(|| "...".to_string());
-        let bump = format!("{} -> {}", current, next_version.prefixed_tag).green();
+        let bump = format!("{} -> {}", bump.current, bump.next).green();
         info!("Bumped package {} version: {}", opts.package_name, bump);
 
         Ok(())

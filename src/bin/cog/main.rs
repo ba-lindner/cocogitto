@@ -444,16 +444,13 @@ fn main() -> Result<()> {
 
             let increment = match version {
                 Some(version) => IncrementCommand::Manual(version),
-                None if auto => match package.as_ref() {
-                    Some(package) => {
-                        if !is_monorepo {
-                            bail!("Cannot create package version on non mono-repository config")
-                        };
+                None if auto => {
+                    if !is_monorepo && package.is_some() {
+                        bail!("Cannot create package version on non mono-repository config")
+                    };
 
-                        IncrementCommand::AutoPackage(package.to_owned())
-                    }
-                    None => IncrementCommand::Auto,
-                },
+                    IncrementCommand::Auto
+                }
                 None if major => IncrementCommand::Fixed(Increment::Major),
                 None if minor => IncrementCommand::Fixed(Increment::Minor),
                 None if patch => IncrementCommand::Fixed(Increment::Patch),

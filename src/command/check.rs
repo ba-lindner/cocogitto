@@ -1,6 +1,7 @@
 use crate::conventional::commit::Commit;
 use crate::error::CogCheckReport;
 
+use crate::git::rev::revspec::RevSpec;
 use crate::git::tag::TagLookUpOptions;
 use crate::CocoGitto;
 use anyhow::anyhow;
@@ -16,39 +17,24 @@ impl CocoGitto {
         ignore_fixup_commits: bool,
         range: Option<String>,
     ) -> Result<()> {
-        let commit_range = if let Some(range) = range {
-            self.repository.revwalk_old(&range)?
+        let spec = if let Some(range) = range {
+            RevSpec::parse(&range, &self.repository)?
         } else if check_from_latest_tag {
             let tag = self
                 .repository
                 .get_latest_tag(TagLookUpOptions::default())?;
-            self.repository.revwalk_old(&format!("{tag}.."))?
+            RevSpec::from_tag(&tag)
         } else {
-            self.repository.revwalk_old("..")?
+            RevSpec::default()
         };
 
-        let ignore_merge_commit_fn = |commit: &git2::Commit| commit.parent_count() <= 1;
-        let ignore_fixup_commit_fn = |commit: &git2::Commit| {
-            !commit.message().unwrap().starts_with("fixup!")
-                && !commit.message().unwrap().starts_with("squash!")
-                && !commit.message().unwrap().starts_with("amend!")
-        };
+        let mut commit_range = self.repository.revwalk(&spec)?;
+        commit_range.filter_merge_fixup_commits(ignore_merge_commits, ignore_fixup_commits);
 
         let errors: Vec<_> = commit_range
-            .iter_commits()
-            .filter(|commit| {
-                if ignore_merge_commits && ignore_fixup_commits {
-                    ignore_merge_commit_fn(commit) && ignore_fixup_commit_fn(commit)
-                } else if ignore_fixup_commits {
-                    ignore_fixup_commit_fn(commit)
-                } else if ignore_merge_commits {
-                    ignore_merge_commit_fn(commit)
-                } else {
-                    true
-                }
-            })
-            .map(Commit::from_git_commit)
-            .filter_map(Result::err)
+            .commits
+            .iter()
+            .filter_map(|(commit, _)| Commit::from_git_commit(commit).err())
             .collect();
 
         if errors.is_empty() {
@@ -57,7 +43,7 @@ impl CocoGitto {
             Ok(())
         } else {
             let report = CogCheckReport {
-                from: commit_range.from_oid(),
+                from: commit_range.from(),
                 errors: errors.into_iter().map(|err| *err).collect(),
             };
             Err(anyhow!("{}", report))

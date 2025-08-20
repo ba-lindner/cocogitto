@@ -177,39 +177,16 @@ impl PartialOrd<Tag> for Tag {
 
 impl Default for Tag {
     fn default() -> Self {
-        Tag::create(Version::new(0, 0, 0), None)
+        Self {
+            package: None,
+            prefix: SETTINGS.tag_prefix.clone(),
+            version: Version::new(0, 0, 0),
+            oid: None,
+        }
     }
 }
 
 impl Tag {
-    pub(crate) fn strip_metadata(&self) -> Self {
-        let mut copy_without_prefix = self.clone();
-        copy_without_prefix.package = None;
-        copy_without_prefix.prefix = None;
-        copy_without_prefix
-    }
-
-    // Tag always contains an oid unless it was created before the tag exist.
-    // The only case where we do that is while creating the changelog during `cog bump`.
-    // In this situation we need a tag to generate the changelog but this tag does not exist in the
-    // repo yet.
-    pub(crate) fn oid_unchecked(&self) -> &Oid {
-        self.oid.as_ref().unwrap()
-    }
-
-    pub(crate) fn create(version: Version, package: Option<String>) -> Self {
-        Tag {
-            package,
-            prefix: SETTINGS.tag_prefix.clone(),
-            version,
-            oid: None,
-        }
-    }
-
-    pub(crate) fn oid(&self) -> Option<&Oid> {
-        self.oid.as_ref()
-    }
-
     pub fn from_str(raw: &str, oid: Option<Oid>) -> Result<Tag, TagError> {
         let prefix = SETTINGS.tag_prefix.as_ref();
 

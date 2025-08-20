@@ -1,8 +1,8 @@
 use crate::conventional::changelog::error::ChangelogError;
+use crate::git::rev::cache::CommitInfo;
 
 use serde::Serialize;
 
-use crate::git::oid::OidOf;
 use std::io;
 use std::path::PathBuf;
 use tera::Context;
@@ -133,8 +133,8 @@ pub struct MonoRepoContext<'a> {
 pub struct PackageBumpContext<'a> {
     pub package_name: &'a str,
     pub package_path: String,
-    pub version: OidOf,
-    pub from: Option<OidOf>,
+    pub version: CommitInfo,
+    pub from: Option<CommitInfo>,
 }
 
 #[derive(Debug)]

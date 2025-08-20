@@ -73,11 +73,11 @@ pub fn git_status() -> Result<String> {
 }
 
 /// Write the given content to the provided path and add it to the git index
-pub fn git_add<S: AsRef<Path>>(content: &str, path: S) -> Result<()>
-where
-    S: ToString,
-{
-    let path = path.to_string();
+pub fn git_add<S: AsRef<Path>>(content: &str, path: S) -> Result<()> {
+    if let Some(parent) = path.as_ref().parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let path = path.as_ref().display().to_string();
     run_cmd!(
         echo "writing $content to $path";
         echo $content > $path;

@@ -1,5 +1,6 @@
 use crate::conventional::commit::{verify, Commit};
 
+use crate::git::rev::revspec::RevSpec;
 use crate::git::tag::TagLookUpOptions;
 use crate::{CocoGitto, SETTINGS};
 use anyhow::{anyhow, Result};
@@ -13,13 +14,13 @@ use tempfile::TempDir;
 
 impl CocoGitto {
     pub fn check_and_edit(&self, from_latest_tag: bool) -> Result<()> {
-        let commits = if from_latest_tag {
+        let range = if from_latest_tag {
             let tag = self
                 .repository
                 .get_latest_tag(TagLookUpOptions::default())?;
-            self.repository.revwalk_old(&format!("{tag}.."))?
+            self.repository.revwalk(&RevSpec::from_tag(&tag))?
         } else {
-            self.repository.revwalk_old("..")?
+            self.repository.revwalk(&RevSpec::default())?
         };
 
         let editor = std::env::var("EDITOR")
@@ -27,23 +28,16 @@ impl CocoGitto {
 
         let dir = TempDir::new()?;
 
-        let errored_commits: Vec<Oid> = commits
-            .iter_commits()
-            .map(|commit| {
-                let conv_commit = Commit::from_git_commit(commit);
-                (commit.id(), conv_commit)
-            })
-            .filter(|commit| commit.1.is_err())
-            .map(|commit| commit.0)
+        let errored_commits: Vec<Oid> = range
+            .commits
+            .iter()
+            .filter(|(commit, _)| Commit::from_git_commit(commit).is_err())
+            .map(|(commit, _)| commit.id())
             .collect();
 
         // Get the last commit oid on the list as a starting point for our rebase
-        let last_errored_commit = errored_commits.last();
-        if let Some(last_errored_commit) = last_errored_commit {
-            let commit = self
-                .repository
-                .0
-                .find_commit(last_errored_commit.to_owned())?;
+        if let Some(last_errored_commit) = errored_commits.last() {
+            let commit = self.repository.0.find_commit(*last_errored_commit)?;
 
             let rebase_start = if commit.parent_count() == 0 {
                 commit.id()

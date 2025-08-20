@@ -1055,3 +1055,37 @@ fn bump_prerelease_from_latest_pre_release_monorepo() -> Result<()> {
 
     Ok(())
 }
+
+// currently a bug
+
+// #[sealed_test]
+// fn bump_non_public_package() -> Result<()> {
+//     // Arrange
+//     git_init()?;
+//     git_add(
+//         indoc!(
+//             r#"
+//             [packages.pkg]
+//             path = "pkg"
+//             public_api = false
+//             "#
+//         ),
+//         "cog.toml",
+//     )?;
+//     git_commit("chore: init")?;
+//     git_add(".", "pkg/file")?;
+//     git_commit("feat: implement package")?;
+
+//     // Act
+//     Command::cargo_bin("cog")?
+//         .arg("bump")
+//         .arg("--auto")
+//         .assert()
+//         .success();
+
+//     // Assert
+//     assert_tag_exists("pkg-0.1.0")?;
+//     assert_tag_does_not_exist("0.0.0")?;
+
+//     Ok(())
+// }

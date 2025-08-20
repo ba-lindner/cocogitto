@@ -4,6 +4,7 @@ use crate::conventional::changelog::template::PackageBumpContext;
 use crate::conventional::changelog::template::Template;
 
 use crate::conventional::changelog::ReleaseType;
+use crate::git::rev::cache::CommitInfo;
 use crate::git::rev::revspec::RevSpec;
 use crate::CocoGitto;
 use crate::SETTINGS;
@@ -20,28 +21,44 @@ impl CocoGitto {
     }
 
     pub fn get_monorepo_changelog(&self, pattern: &str, template: Template) -> Result<String> {
-        let mut packages = vec![];
+        let mut packages = Vec::new();
 
-        let package_data = SETTINGS
-            .packages
-            .iter()
-            .map(|(name, p)| (name, p.path.to_string_lossy().to_string()));
+        let spec = RevSpec::parse(pattern, &self.repository)?;
+        let range = self.repository.revwalk(&spec)?;
+        let all_tags: Vec<_> = range.into_iter().flat_map(|(_, info)| info.tags).collect();
 
-        for (package_name, package_path) in package_data {
-            let spec = RevSpec::parse(pattern, &self.repository)?;
-            let cache = self.repository.get_cache();
-            let to_oid_of = |oid| {
-                cache
-                    .get_info(oid)
-                    .into_owned()
-                    .as_oid_of(Some(package_name))
+        let cache = self.repository.get_cache();
+
+        for (package_name, package) in &SETTINGS.packages {
+            let version = all_tags
+                .iter()
+                .filter(|tag| tag.package.as_ref() == Some(package_name))
+                .max();
+            let min = all_tags
+                .iter()
+                .filter(|tag| tag.package.as_ref() == Some(package_name))
+                .min();
+
+            let (version, from) = if let Some((vers, min)) = version.zip(min) {
+                (
+                    CommitInfo::from_tag(vers),
+                    self.repository
+                        .get_previous_tag(min)?
+                        .map(|tag| CommitInfo::from_tag(&tag))
+                        .unwrap_or(CommitInfo::new(cache.first)),
+                )
+            } else {
+                (
+                    CommitInfo::new(spec.to.unwrap_or(cache.head)),
+                    CommitInfo::new(spec.from.unwrap_or(cache.first)),
+                )
             };
 
             let context = PackageBumpContext {
                 package_name,
-                package_path,
-                version: to_oid_of(spec.to.unwrap_or(cache.head)),
-                from: Some(to_oid_of(spec.from.unwrap_or(cache.first))),
+                package_path: package.path.to_string_lossy().into_owned(),
+                version,
+                from: Some(from),
             };
 
             packages.push(context);
@@ -51,12 +68,8 @@ impl CocoGitto {
             packages,
         };
 
-        let spec = RevSpec::parse(pattern, &self.repository)?;
-        let mut commits = self.repository.revwalk(&spec)?;
-        commits.retain_global(&self.repository)?;
-
-        let changelog = Release::try_from(commits)?;
-        changelog
+        let range = self.repository.revwalk(&spec)?.global()?;
+        Release::try_from(range)?
             .as_markdown(template, ReleaseType::MonoRepo(context))
             .map_err(Into::into)
     }
