@@ -1,4 +1,4 @@
-use crate::command::bump::PackageBumpOptions;
+use crate::command::bump::{BumpOptions, WithPkg};
 use crate::conventional::changelog::template::PackageContext;
 use crate::conventional::changelog::ReleaseType;
 use crate::conventional::version::Increment;
@@ -12,17 +12,17 @@ use log::info;
 use tera::Tera;
 
 impl CocoGitto {
-    pub fn create_package_version(&mut self, opts: PackageBumpOptions) -> Result<()> {
+    pub fn create_package_version(&mut self, opts: BumpOptions<WithPkg>) -> Result<()> {
         self.pre_bump_checks(opts.skip_untracked)?;
 
         let bump = self.get_next_version(
-            &opts.common(),
-            CommitRangeFilter::Package(opts.package_name),
+            &opts,
+            CommitRangeFilter::Package(opts.package.0),
             None,
             false,
         )?;
         if bump.increment() == Increment::NoBump {
-            print!("No conventional commits found for {} that required a bump. Changelog will be updated on the next bump.\nPre-Hooks and Post-Hooks have been skipped.\n", opts.package_name);
+            print!("No conventional commits found for {} that required a bump. Changelog will be updated on the next bump.\nPre-Hooks and Post-Hooks have been skipped.\n", opts.package.0);
             return Ok(());
         }
 
@@ -34,21 +34,16 @@ impl CocoGitto {
         if !SETTINGS.disable_changelog {
             bump.release.pretty_print_bump_summary()?;
 
-            let path = opts.package.changelog_path();
+            let path = opts.package.1.changelog_path();
             let template = SETTINGS.get_package_changelog_template()?;
             let additional_context = ReleaseType::Package(PackageContext {
-                package_name: opts.package_name,
+                package_name: opts.package.0,
             });
             bump.release
                 .write_to_file(path, template, additional_context)?;
         }
 
-        let hook_result = self.run_hooks(
-            HookType::PreBump,
-            &bump,
-            opts.hooks_config,
-            Some((opts.package_name, opts.package)),
-        );
+        let hook_result = self.run_hooks(HookType::PreBump, &bump, opts.hooks_config);
 
         self.repository.add_all()?;
         self.unwrap_or_stash_and_exit(&Tag::default(), hook_result);
@@ -83,15 +78,10 @@ impl CocoGitto {
                 .create_tag(&bump.next, disable_bump_commit)?;
         }
 
-        self.run_hooks(
-            HookType::PostBump,
-            &bump,
-            opts.hooks_config,
-            Some((opts.package_name, opts.package)),
-        )?;
+        self.run_hooks(HookType::PostBump, &bump, opts.hooks_config)?;
 
         let bump = format!("{} -> {}", bump.current, bump.next).green();
-        info!("Bumped package {} version: {}", opts.package_name, bump);
+        info!("Bumped package {} version: {}", opts.package.0, bump);
 
         Ok(())
     }

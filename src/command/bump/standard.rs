@@ -37,7 +37,7 @@ impl CocoGitto {
                 .write_to_file(path, template, ReleaseType::Standard)?;
         }
 
-        let hook_result = self.run_hooks(HookType::PreBump, &bump, opts.hooks_config, None);
+        let hook_result = self.run_hooks(HookType::PreBump, &bump, opts.hooks_config);
 
         self.repository.add_all()?;
         self.unwrap_or_stash_and_exit(&Tag::default(), hook_result);
@@ -72,7 +72,7 @@ impl CocoGitto {
                 .create_tag(&bump.next, disable_bump_commit)?;
         }
 
-        self.run_hooks(HookType::PostBump, &bump, opts.hooks_config, None)?;
+        self.run_hooks(HookType::PostBump, &bump, opts.hooks_config)?;
 
         let bump = format!("{} -> {}", bump.current, bump.next).green();
         info!("Bumped version: {}", bump);

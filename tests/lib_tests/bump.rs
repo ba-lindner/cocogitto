@@ -10,7 +10,7 @@ use sealed_test::prelude::*;
 use speculoos::prelude::*;
 
 use crate::helpers::*;
-use cocogitto::command::bump::{BumpOptions, PackageBumpOptions};
+use cocogitto::command::bump::BumpOptions;
 use cocogitto::settings::{MonoRepoPackage, Settings};
 use cocogitto::{conventional::version::IncrementCommand, CocoGitto};
 
@@ -170,9 +170,8 @@ fn package_bump_ok() -> Result<()> {
     let mut cocogitto = CocoGitto::get()?;
 
     // Act
-    let result = cocogitto.create_package_version(PackageBumpOptions {
-        package_name: "one",
-        package,
+    let result = cocogitto.create_package_version(BumpOptions {
+        package: ("one", package),
         ..Default::default()
     });
 
@@ -234,17 +233,15 @@ fn consecutive_package_bump_ok() -> Result<()> {
     let mut cocogitto = CocoGitto::get()?;
 
     // Act
-    cocogitto.create_package_version(PackageBumpOptions {
-        package_name: "thumbor",
-        package: &thumbor(),
+    cocogitto.create_package_version(BumpOptions {
+        package: ("thumbor", &thumbor()),
         ..Default::default()
     })?;
 
     cocogitto.clear_cache();
 
-    cocogitto.create_package_version(PackageBumpOptions {
-        package_name: "jenkins",
-        package: &jenkins(),
+    cocogitto.create_package_version(BumpOptions {
+        package: ("jenkins", &jenkins()),
         ..Default::default()
     })?;
 
@@ -256,9 +253,8 @@ fn consecutive_package_bump_ok() -> Result<()> {
 
     cocogitto.clear_cache();
 
-    cocogitto.create_package_version(PackageBumpOptions {
-        package_name: "jenkins",
-        package: &jenkins(),
+    cocogitto.create_package_version(BumpOptions {
+        package: ("jenkins", &jenkins()),
         ..Default::default()
     })?;
 
@@ -333,6 +329,7 @@ fn ordered_package_bump() -> Result<()> {
         skip_ci_override: None,
         skip_untracked: false,
         disable_bump_commit: false,
+        package: (),
     })?;
 
     // Assert
@@ -739,9 +736,8 @@ fn bump_no_error_should_be_thrown_on_only_chore_docs_commit() -> Result<()> {
 
     cocogitto.clear_cache();
 
-    cocogitto.create_package_version(PackageBumpOptions {
-        package_name: "jenkins",
-        package: &jenkins(),
+    cocogitto.create_package_version(BumpOptions {
+        package: ("jenkins", &jenkins()),
         ..Default::default()
     })?;
     assert_tag_does_not_exist("jenkins-0.2.0")?;
@@ -854,9 +850,8 @@ fn error_on_no_conventional_commits_found_for_package() -> Result<()> {
 
     let mut cocogitto = CocoGitto::get()?;
 
-    let first_result = cocogitto.create_package_version(PackageBumpOptions {
-        package_name: "jenkins",
-        package: &jenkins(),
+    let first_result = cocogitto.create_package_version(BumpOptions {
+        package: ("jenkins", &jenkins()),
         ..Default::default()
     });
 
@@ -868,9 +863,8 @@ fn error_on_no_conventional_commits_found_for_package() -> Result<()> {
         git commit -m "some other jenkins stuff";
     )?;
 
-    let second_result = cocogitto.create_package_version(PackageBumpOptions {
-        package_name: "jenkins",
-        package: &jenkins(),
+    let second_result = cocogitto.create_package_version(BumpOptions {
+        package: ("jenkins", &jenkins()),
         ..Default::default()
     });
 

@@ -1,4 +1,4 @@
-use crate::command::bump::{BumpData, BumpOptions};
+use crate::command::bump::{BumpData, BumpOptions, WithPkg};
 
 use crate::conventional::changelog::release::Release;
 use crate::conventional::changelog::template::{
@@ -19,13 +19,6 @@ use anyhow::{bail, Result};
 
 use log::{info, warn};
 use tera::Tera;
-
-#[derive(Debug)]
-struct PackageBumpData<'p> {
-    package_name: &'p str,
-    package: &'p MonoRepoPackage,
-    data: BumpData,
-}
 
 #[derive(Debug)]
 pub struct PackageData<'n> {
@@ -63,7 +56,7 @@ impl CocoGitto {
 
         if opts.dry_run {
             for bump in bumps {
-                println!("{}", bump.data.next)
+                println!("{}", bump.next)
             }
             return Ok(());
         }
@@ -72,8 +65,9 @@ impl CocoGitto {
             current: Tag::default(),
             next: Tag::default(),
             release: Release::empty(),
+            package: (),
         };
-        let hook_result = self.run_hooks(HookType::PreBump, &empty_bump, opts.hooks_config, None);
+        let hook_result = self.run_hooks(HookType::PreBump, &empty_bump, opts.hooks_config);
 
         let disable_bump_commit = opts.disable_bump_commit || SETTINGS.disable_bump_commit;
 
@@ -99,22 +93,17 @@ impl CocoGitto {
         if SETTINGS.generate_mono_repository_package_tags {
             for bump in &bumps {
                 self.repository
-                    .create_tag(&bump.data.next, disable_bump_commit)?;
+                    .create_tag(&bump.next, disable_bump_commit)?;
             }
         }
 
         // Run per package post hooks
         for bump in bumps {
-            self.run_hooks(
-                HookType::PostBump,
-                &bump.data,
-                opts.hooks_config,
-                Some((bump.package_name, bump.package)),
-            )?;
+            self.run_hooks(HookType::PostBump, &bump, opts.hooks_config)?;
         }
 
         // Run global post hooks
-        self.run_hooks(HookType::PreBump, &empty_bump, opts.hooks_config, None)?;
+        self.run_hooks(HookType::PreBump, &empty_bump, opts.hooks_config)?;
 
         Ok(())
     }
@@ -134,8 +123,8 @@ impl CocoGitto {
             IncrementCommand::AutoMonoRepoGlobal(
                 bumps
                     .iter()
-                    .filter(|bump| bump.package.public_api)
-                    .map(|bump| bump.data.increment())
+                    .filter(|bump| bump.package.1.public_api)
+                    .map(|bump| bump.increment())
                     .max(),
             )
         } else {
@@ -147,7 +136,7 @@ impl CocoGitto {
 
         if opts.dry_run {
             for bump in bumps {
-                println!("{}", bump.data.next)
+                println!("{}", bump.next)
             }
             print!("{}", global_bump.next);
             return Ok(());
@@ -156,13 +145,13 @@ impl CocoGitto {
         let mut template_context = vec![];
         for bump in &bumps {
             template_context.push(PackageBumpContext {
-                package_name: bump.package_name,
-                package_path: bump.package.path.display().to_string(),
-                version: CommitInfo::from_tag(&bump.data.next),
-                from: Some(if bump.data.current.is_zero() {
+                package_name: bump.package.0,
+                package_path: bump.package.1.path.display().to_string(),
+                version: CommitInfo::from_tag(&bump.next),
+                from: Some(if bump.current.is_zero() {
                     CommitInfo::new(self.repository.get_cache().first)
                 } else {
-                    CommitInfo::from_tag(&bump.data.current)
+                    CommitInfo::from_tag(&bump.current)
                 }),
             })
         }
@@ -183,7 +172,7 @@ impl CocoGitto {
             )?;
         }
 
-        let hook_result = self.run_hooks(HookType::PreBump, &global_bump, opts.hooks_config, None);
+        let hook_result = self.run_hooks(HookType::PreBump, &global_bump, opts.hooks_config);
 
         self.repository.add_all()?;
         self.unwrap_or_stash_and_exit(&global_bump.next, hook_result);
@@ -212,7 +201,7 @@ impl CocoGitto {
         if SETTINGS.generate_mono_repository_package_tags {
             for bump in &bumps {
                 self.repository
-                    .create_tag(&bump.data.next, disable_bump_commit)?;
+                    .create_tag(&bump.next, disable_bump_commit)?;
             }
         }
 
@@ -230,16 +219,11 @@ impl CocoGitto {
 
         // Run per package post hooks
         for bump in bumps {
-            self.run_hooks(
-                HookType::PostBump,
-                &bump.data,
-                opts.hooks_config,
-                Some((bump.package_name, bump.package)),
-            )?;
+            self.run_hooks(HookType::PostBump, &bump, opts.hooks_config)?;
         }
 
         // Run global post hooks
-        self.run_hooks(HookType::PostBump, &global_bump, opts.hooks_config, None)?;
+        self.run_hooks(HookType::PostBump, &global_bump, opts.hooks_config)?;
 
         Ok(())
     }
@@ -282,7 +266,7 @@ impl CocoGitto {
             )?;
         }
 
-        let hook_result = self.run_hooks(HookType::PreBump, &bump, opts.hooks_config, None);
+        let hook_result = self.run_hooks(HookType::PreBump, &bump, opts.hooks_config);
 
         self.repository.add_all()?;
         self.unwrap_or_stash_and_exit(&Tag::default(), hook_result);
@@ -318,7 +302,7 @@ impl CocoGitto {
         }
 
         // Run global post hooks
-        self.run_hooks(HookType::PostBump, &bump, opts.hooks_config, None)?;
+        self.run_hooks(HookType::PostBump, &bump, opts.hooks_config)?;
 
         Ok(())
     }
@@ -346,7 +330,7 @@ impl CocoGitto {
         &'c self,
         opts: &BumpOptions,
         cache: &mut RevwalkCache<'c>,
-    ) -> Result<Vec<PackageBumpData<'static>>> {
+    ) -> Result<Vec<BumpData<WithPkg<'static>>>> {
         let mut package_bumps = vec![];
         let mut packages: Vec<(&String, &MonoRepoPackage)> = SETTINGS.packages.iter().collect();
         packages.sort_by(|a, b| a.1.bump_order.cmp(&b.1.bump_order));
@@ -362,10 +346,11 @@ impl CocoGitto {
                 continue;
             }
 
-            package_bumps.push(PackageBumpData {
-                package_name,
-                package,
-                data: bump,
+            package_bumps.push(BumpData {
+                current: bump.current,
+                next: bump.next,
+                release: bump.release,
+                package: (package_name.as_str(), package),
             })
         }
 
@@ -376,32 +361,26 @@ impl CocoGitto {
     fn bump_packages(
         &mut self,
         hooks_config: Option<&str>,
-        package_bumps: &Vec<PackageBumpData>,
+        package_bumps: &Vec<BumpData<WithPkg<'_>>>,
     ) -> Result<()> {
         for bump in package_bumps {
-            bump.data.release.pretty_print_bump_summary()?;
+            bump.release.pretty_print_bump_summary()?;
 
-            let path = bump.package.changelog_path();
+            let path = bump.package.1.changelog_path();
             let template = SETTINGS.get_package_changelog_template()?;
 
             let additional_context = ReleaseType::Package(PackageContext {
-                package_name: bump.package_name,
+                package_name: bump.package.0,
             });
 
-            bump.data
-                .release
+            bump.release
                 .write_to_file(&path, template, additional_context)?;
             info!("\tChangelog updated {:?}", path);
 
-            let hook_result = self.run_hooks(
-                HookType::PreBump,
-                &bump.data,
-                hooks_config,
-                Some((bump.package_name, bump.package)),
-            );
+            let hook_result = self.run_hooks(HookType::PreBump, &bump, hooks_config);
 
             self.repository.add_all()?;
-            self.unwrap_or_stash_and_exit(&bump.data.next, hook_result);
+            self.unwrap_or_stash_and_exit(&bump.next, hook_result);
         }
 
         Ok(())

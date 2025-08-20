@@ -29,24 +29,26 @@ mod monorepo;
 mod package;
 mod standard;
 
-#[derive(Default)]
-pub struct BumpOptions<'a> {
-    pub increment: IncrementCommand,
-    pub pre_release: Option<&'a str>,
-    pub build: Option<&'a str>,
-    pub hooks_config: Option<&'a str>,
-    pub annotated: Option<String>,
-    pub dry_run: bool,
-    pub skip_ci: bool,
-    pub skip_ci_override: Option<String>,
-    pub skip_untracked: bool,
-    pub disable_bump_commit: bool,
+pub type WithPkg<'p> = (&'p str, &'p MonoRepoPackage);
+
+pub trait MaybePkg {
+    fn maybe_pkg(&self) -> Option<WithPkg<'_>>;
+}
+
+impl MaybePkg for () {
+    fn maybe_pkg(&self) -> Option<WithPkg<'_>> {
+        None
+    }
+}
+
+impl MaybePkg for WithPkg<'_> {
+    fn maybe_pkg(&self) -> Option<WithPkg<'_>> {
+        Some(*self)
+    }
 }
 
 #[derive(Default)]
-pub struct PackageBumpOptions<'a> {
-    pub package_name: &'a str,
-    pub package: &'a MonoRepoPackage,
+pub struct BumpOptions<'a, P = ()> {
     pub increment: IncrementCommand,
     pub pre_release: Option<&'a str>,
     pub build: Option<&'a str>,
@@ -57,37 +59,40 @@ pub struct PackageBumpOptions<'a> {
     pub skip_ci_override: Option<String>,
     pub skip_untracked: bool,
     pub disable_bump_commit: bool,
+    pub package: P,
+}
+
+impl<'a, P> BumpOptions<'a, P> {
+    pub fn set_package<P2>(self, package: P2) -> BumpOptions<'a, P2> {
+        BumpOptions {
+            increment: self.increment,
+            pre_release: self.pre_release,
+            build: self.build,
+            hooks_config: self.hooks_config,
+            annotated: self.annotated,
+            dry_run: self.dry_run,
+            skip_ci: self.skip_ci,
+            skip_ci_override: self.skip_ci_override,
+            skip_untracked: self.skip_untracked,
+            disable_bump_commit: self.disable_bump_commit,
+            package,
+        }
+    }
 }
 
 #[derive(Debug)]
-struct BumpData {
+struct BumpData<P = ()> {
     current: Tag,
     next: Tag,
     release: Release,
+    package: P,
 }
 
-impl BumpData {
+impl<P> BumpData<P> {
     fn increment(&self) -> Increment {
         self.next
             .get_increment_from(&self.current)
             .unwrap_or(Increment::NoBump)
-    }
-}
-
-impl<'a> PackageBumpOptions<'a> {
-    fn common(&self) -> BumpOptions<'a> {
-        BumpOptions {
-            increment: self.increment.clone(),
-            pre_release: self.pre_release,
-            build: self.build,
-            hooks_config: self.hooks_config,
-            annotated: self.annotated.clone(),
-            dry_run: self.dry_run,
-            skip_ci: self.skip_ci,
-            skip_ci_override: self.skip_ci_override.clone(),
-            skip_untracked: self.skip_untracked,
-            disable_bump_commit: self.disable_bump_commit,
-        }
     }
 }
 
@@ -154,13 +159,13 @@ impl CocoGitto {
         Ok(())
     }
 
-    fn get_next_version<'c>(
+    fn get_next_version<'c, P: Copy>(
         &'c self,
-        opts: &'_ BumpOptions,
+        opts: &'_ BumpOptions<P>,
         filter: CommitRangeFilter<'_>,
         cache: Option<&'_ mut RevwalkCache<'c>>,
         allow_empty: bool,
-    ) -> Result<BumpData> {
+    ) -> Result<BumpData<P>> {
         let tag_opts = match filter {
             CommitRangeFilter::Package(pkg) => TagLookUpOptions::package(pkg),
             _ => TagLookUpOptions::default(),
@@ -258,17 +263,17 @@ impl CocoGitto {
             current,
             next,
             release,
+            package: opts.package,
         })
     }
 
-    fn run_hooks(
+    fn run_hooks<P: MaybePkg>(
         &self,
         hook_type: HookType,
-        bump: &BumpData,
+        bump: &BumpData<P>,
         hook_profile: Option<&str>,
-        package: Option<(&str, &MonoRepoPackage)>,
     ) -> Result<()> {
-        let (package_name, package) = package.unzip();
+        let (package_name, package) = bump.package.maybe_pkg().unzip();
 
         let settings = Settings::get(&self.repository)?;
 
