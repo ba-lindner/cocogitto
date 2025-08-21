@@ -377,7 +377,7 @@ impl CocoGitto {
                 .write_to_file(&path, template, additional_context)?;
             info!("\tChangelog updated {:?}", path);
 
-            let hook_result = self.run_hooks(HookType::PreBump, &bump, hooks_config);
+            let hook_result = self.run_hooks(HookType::PreBump, bump, hooks_config);
 
             self.repository.add_all()?;
             self.unwrap_or_stash_and_exit(&bump.next, hook_result);

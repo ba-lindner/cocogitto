@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use crate::hook::{HookSpan, VersionSpan};
+use crate::hook::{HookPart, VersionSpan};
 
 use crate::hook::error::HookParseError;
 use pest::iterators::{Pair, Pairs};
@@ -13,7 +13,7 @@ use semver::{BuildMetadata, Prerelease, Version};
 #[grammar = "hook/version_dsl.pest"]
 struct HookDslParser;
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone, Copy)]
 pub enum VersionAccessToken {
     Major,
     Minor,
@@ -37,31 +37,31 @@ pub enum Token {
     VersionAccess(VersionAccessToken),
 }
 
-pub fn parse(hook: &str) -> Result<HookSpan, HookParseError> {
+pub fn parse(hook: &str) -> Result<Vec<HookPart>, HookParseError> {
     let pairs = HookDslParser::parse(Rule::version_dsl, hook)?
         .next()
         .unwrap();
 
-    let mut span = HookSpan {
-        version_spans: vec![],
-        content: pairs.as_str().to_string(),
-    };
+    let mut parts = Vec::new();
 
     for pair in pairs.into_inner() {
-        if pair.as_rule() == Rule::version {
-            let version_span = parse_version(pair)?;
-            span.version_spans.push(version_span);
+        match pair.as_rule() {
+            Rule::version => {
+                parts.push(HookPart::Version(parse_version(pair)?));
+            }
+            Rule::other => {
+                parts.push(HookPart::Other(pair.as_str().to_string()));
+            }
+            _ => {}
         }
     }
 
-    Ok(span)
+    Ok(parts)
 }
 
 fn parse_version(pair: Pair<Rule>) -> Result<VersionSpan, HookParseError> {
     let mut tokens = VecDeque::new();
     let mut default_version: Option<Version> = None;
-    let start = pair.as_span().start();
-    let end = pair.as_span().end();
 
     for pair in pair.into_inner() {
         match pair.as_rule() {
@@ -100,7 +100,6 @@ fn parse_version(pair: Pair<Rule>) -> Result<VersionSpan, HookParseError> {
     }
 
     Ok(VersionSpan {
-        range: start..end,
         tokens,
         default_version,
     })
@@ -129,7 +128,7 @@ mod test {
     use std::collections::VecDeque;
 
     use crate::hook::parser::Token;
-    use crate::hook::{parser, VersionSpan};
+    use crate::hook::{parser, HookPart, VersionSpan};
 
     use semver::{Prerelease, Version};
     use speculoos::prelude::*;
@@ -139,9 +138,8 @@ mod test {
         let result = parser::parse("the latest {{latest+1minor}}, the greatest {{version+patch}}");
         assert_that!(result)
             .is_ok()
-            .map(|span| &span.version_spans)
-            .contains(&VersionSpan {
-                range: 11..28,
+            .map(|v| v)
+            .contains(&HookPart::Version(VersionSpan {
                 tokens: VecDeque::from(vec![
                     Token::LatestVersion,
                     Token::Add,
@@ -149,7 +147,7 @@ mod test {
                     Token::Minor,
                 ]),
                 default_version: None,
-            });
+            }));
     }
 
     #[test]
@@ -157,8 +155,7 @@ mod test {
         let span =
             parser::parse("the latest {{latest_tag+1minor}}, the greatest {{version_tag+patch}}")?;
 
-        assert_that!(&span.version_spans).contains(&VersionSpan {
-            range: 11..32,
+        assert_that!(span).contains(&HookPart::Version(VersionSpan {
             tokens: VecDeque::from(vec![
                 Token::LatestVersionTag,
                 Token::Add,
@@ -166,13 +163,12 @@ mod test {
                 Token::Minor,
             ]),
             default_version: None,
-        });
+        }));
 
-        assert_that!(&span.version_spans).contains(&VersionSpan {
-            range: 47..68,
+        assert_that!(span).contains(&HookPart::Version(VersionSpan {
             tokens: VecDeque::from(vec![Token::VersionTag, Token::Add, Token::Patch]),
             default_version: None,
-        });
+        }));
 
         Ok(())
     }
@@ -182,9 +178,7 @@ mod test {
         let result = parser::parse("the greatest {{version+patch-pre.alpha0}}");
         assert_that!(result)
             .is_ok()
-            .map(|span| &span.version_spans)
-            .contains(&VersionSpan {
-                range: 13..41,
+            .contains(&HookPart::Version(VersionSpan {
                 tokens: VecDeque::from(vec![
                     Token::Version,
                     Token::Add,
@@ -192,7 +186,7 @@ mod test {
                     Token::PreRelease(Prerelease::new("pre.alpha0").unwrap()),
                 ]),
                 default_version: None,
-            });
+            }));
     }
 
     #[test]
@@ -200,12 +194,10 @@ mod test {
         let result = parser::parse("version package: {{package}}");
         assert_that!(result)
             .is_ok()
-            .map(|span| &span.version_spans)
-            .contains(&VersionSpan {
-                range: 17..28,
+            .contains(&HookPart::Version(VersionSpan {
                 tokens: VecDeque::from(vec![Token::Package]),
                 default_version: None,
-            });
+            }));
     }
 
     #[test]
@@ -220,9 +212,7 @@ mod test {
         let result = parser::parse("the default {{version|1.0.0+1minor}}");
         assert_that!(result)
             .is_ok()
-            .map(|span| &span.version_spans)
-            .contains(&VersionSpan {
-                range: 12..36,
+            .contains(&HookPart::Version(VersionSpan {
                 tokens: VecDeque::from(vec![
                     Token::Version,
                     Token::Add,
@@ -230,6 +220,6 @@ mod test {
                     Token::Minor,
                 ]),
                 default_version: Some(Version::new(1, 0, 0)),
-            });
+            }));
     }
 }

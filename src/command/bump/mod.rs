@@ -23,7 +23,7 @@ use semver::{BuildMetadata, Prerelease};
 use std::default::Default;
 use std::fmt;
 use std::fmt::Write;
-use std::process::exit;
+use std::process::{exit, Command};
 
 mod monorepo;
 mod package;
@@ -277,81 +277,53 @@ impl CocoGitto {
 
         let settings = Settings::get(&self.repository)?;
 
-        let hooks: Vec<Hook> = match (package, hook_profile) {
-            (None, Some(profile)) => settings
-                .get_profile_hooks(profile, hook_type)
-                .iter()
-                .map(|s| s.parse())
-                .enumerate()
-                .map(|(idx, result)| {
-                    result.context(format!(
-                        "Cannot parse bump profile {profile} hook at index {idx}"
-                    ))
-                })
-                .try_collect()?,
+        let hook_src = package
+            .map(|package| package as &dyn Hooks)
+            .unwrap_or(&settings);
 
-            (Some(package), Some(profile)) => {
-                let hooks = package.get_profile_hooks(profile, hook_type);
-
-                hooks
-                    .iter()
-                    .map(|s| s.parse())
-                    .enumerate()
-                    .map(|(idx, result)| {
-                        result.context(format!(
-                            "Cannot parse bump profile {profile} hook at index {idx}"
-                        ))
-                    })
-                    .try_collect()?
-            }
-            (Some(package), None) => package
-                .get_hooks(hook_type)
-                .iter()
-                .map(|s| s.parse())
-                .enumerate()
-                .map(|(idx, result)| result.context(format!("Cannot parse hook at index {idx}")))
-                .try_collect()?,
-            (None, None) => settings
-                .get_hooks(hook_type)
-                .iter()
-                .map(|s| s.parse())
-                .enumerate()
-                .map(|(idx, result)| result.context(format!("Cannot parse hook at index {idx}")))
-                .try_collect()?,
+        let hooks = if let Some(profile) = hook_profile {
+            hook_src.get_profile_hooks(profile, hook_type)
+        } else {
+            hook_src.get_hooks(hook_type)
         };
 
-        if !hooks.is_empty() {
-            let hook_type = match hook_type {
-                HookType::PreBump => "pre-bump",
-                HookType::PostBump => "post-bump",
-            };
-
-            match package_name {
-                None => {
-                    let msg = format!("[{hook_type}]").underline().white().bold();
-                    info!("{msg}")
-                }
-                Some(package_name) => {
-                    let msg = format!("[{hook_type}-{package_name}]")
-                        .underline()
-                        .white()
-                        .bold();
-                    info!("{msg}")
-                }
-            }
+        if hooks.is_empty() {
+            return Ok(());
         }
 
-        for mut hook in hooks {
-            hook.insert_versions(&bump.current, &bump.next)?;
-            let command = hook.to_string();
-            let command = if command.chars().count() > 78 {
-                &command[0..command.len()]
+        let hook_type = match hook_type {
+            HookType::PreBump => "pre-bump",
+            HookType::PostBump => "post-bump",
+        };
+
+        let msg = if let Some(name) = package_name {
+            format!("[{hook_type}-{name}]")
+        } else {
+            format!("[{hook_type}]")
+        };
+        info!("{}", msg.underline().white().bold());
+
+        let profile_hint = hook_profile
+            .map(|profile| format!(" bump profile {profile}"))
+            .unwrap_or_default();
+        for (idx, hook) in hooks.iter().enumerate() {
+            let hook: Hook = hook
+                .parse()
+                .with_context(|| format!("Cannot parse{profile_hint} hook at index {idx}"))?;
+
+            let command = hook.insert_versions(&bump.current, &bump.next)?;
+            if command.len() > 80 {
+                info!("[{}...]", command.chars().take(77).collect::<String>())
             } else {
-                &command
+                info!("[{command}]");
             };
-            info!("[{command}]");
-            let package_path = package.map(|p| p.path.as_path());
-            hook.run(package_path).context(hook.to_string())?;
+            let mut cmd = Command::new("sh");
+            cmd.args(["-c", &command]);
+            if let Some(package) = package {
+                cmd.current_dir(&package.path);
+            }
+            let status = cmd.status().context(command)?;
+            ensure!(status.success(), "hook failed with status {}", status);
             println!();
         }
 
