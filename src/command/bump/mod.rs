@@ -3,13 +3,14 @@ use crate::conventional::changelog::release::Release;
 use crate::conventional::commit::Commit;
 
 use crate::conventional::version::{Increment, IncrementCommand};
+use crate::git::error::Git2Error;
 use crate::git::rev::filters::CommitRangeFilter;
 use crate::git::rev::revspec::RevSpec;
 use crate::git::rev::revwalk::RevwalkCache;
 use crate::git::tag::Tag;
 use crate::hook::{Hook, Hooks};
 use crate::settings::{HookType, MonoRepoPackage, Settings};
-use crate::BumpError;
+use crate::BumpHookError;
 use crate::{CocoGitto, COMMITS_METADATA, SETTINGS};
 use anyhow::Result;
 use anyhow::{bail, ensure, Context};
@@ -96,27 +97,6 @@ impl<P> BumpData<P> {
 }
 
 impl CocoGitto {
-    pub fn unwrap_or_stash_and_exit<T>(&mut self, tag: &Tag, result: Result<T>) -> T {
-        match result {
-            Ok(res) => res,
-            Err(err) => {
-                self.repository
-                    .stash_failed_version(tag.clone())
-                    .expect("stash");
-                error!(
-                    "{}",
-                    BumpError {
-                        cause: err.to_string(),
-                        version: tag.to_string(),
-                        stash_number: 0,
-                    }
-                );
-
-                exit(1);
-            }
-        }
-    }
-
     fn pre_bump_checks(&self, skip_untracked: bool) -> Result<()> {
         if *SETTINGS == Settings::default() {
             let part1 = "Warning: using".yellow();
@@ -255,8 +235,58 @@ impl CocoGitto {
         })
     }
 
-    fn run_hooks<P: MaybePkg>(
+    fn create_bump_commit<P1, P2>(
         &self,
+        bump: &BumpData<P1>,
+        opts: &BumpOptions<P2>,
+    ) -> Result<()> {
+        if opts.disable_bump_commit || SETTINGS.disable_bump_commit {
+            return Ok(());
+        }
+
+        let sign = self.repository.gpg_sign();
+        let skip_ci = opts
+            .skip_ci_override
+            .as_deref()
+            .or(opts.skip_ci.then_some(&SETTINGS.skip_ci));
+        let message = if let Some(skip_ci) = skip_ci {
+            format!("chore(version): {} {}", bump.next, skip_ci)
+        } else {
+            format!("chore(version): {}", bump.next)
+        };
+        self.repository.commit(&message, sign, true)?;
+
+        Ok(())
+    }
+
+    fn create_bump_tag<P1, P2>(&self, bump: &BumpData<P1>, opts: &BumpOptions<P2>) -> Result<()> {
+        if !opts.disable_bump_commit
+            && !SETTINGS.disable_bump_commit
+            && self.repository.is_dirty(true)
+        {
+            let statuses = self.repository.get_statuses()?;
+            bail!(Git2Error::ChangesNeedToBeCommitted(statuses));
+        }
+
+        let head = self.repository.get_head_commit()?.into_object();
+        let tag = bump.next.to_string();
+
+        if let Some(msg_tmpl) = &opts.annotated {
+            let mut context = tera::Context::new();
+            context.insert("latest", &bump.current.version.to_string());
+            context.insert("version", &bump.next.version.to_string());
+            let message = tera::Tera::one_off(&msg_tmpl, &context, false)?;
+            let sig = self.repository.0.signature()?;
+            self.repository.0.tag(&tag, &head, &sig, &message, false)?;
+        } else {
+            self.repository.0.tag_lightweight(&tag, &head, false)?;
+        }
+
+        Ok(())
+    }
+
+    fn run_hooks<P: MaybePkg>(
+        &mut self,
         hook_type: HookType,
         bump: &BumpData<P>,
         hook_profile: Option<&str>,
@@ -265,54 +295,79 @@ impl CocoGitto {
 
         let settings = Settings::get(&self.repository)?;
 
+        // Acquire hooks to be executed
         let hook_src = package
             .map(|package| package as &dyn Hooks)
             .unwrap_or(&settings);
-
         let hooks = if let Some(profile) = hook_profile {
             hook_src.get_profile_hooks(profile, hook_type)
         } else {
             hook_src.get_hooks(hook_type)
         };
-
         if hooks.is_empty() {
             return Ok(());
         }
 
-        let hook_type = match hook_type {
+        // print some info for user
+        let hook_type_str = match hook_type {
             HookType::PreBump => "pre-bump",
             HookType::PostBump => "post-bump",
         };
-
         let msg = if let Some(name) = package_name {
-            format!("[{hook_type}-{name}]")
+            format!("[{hook_type_str}-{name}]")
         } else {
-            format!("[{hook_type}]")
+            format!("[{hook_type_str}]")
         };
         info!("{}", msg.underline().white().bold());
 
+        // execute hooks
         let profile_hint = hook_profile
             .map(|profile| format!(" bump profile {profile}"))
             .unwrap_or_default();
-        for (idx, hook) in hooks.iter().enumerate() {
-            let hook: Hook = hook
-                .parse()
-                .with_context(|| format!("Cannot parse{profile_hint} hook at index {idx}"))?;
+        let exec_result = (|| -> Result<()> {
+            for (idx, hook) in hooks.iter().enumerate() {
+                let hook: Hook = hook
+                    .parse()
+                    .with_context(|| format!("Cannot parse{profile_hint} hook at index {idx}"))?;
 
-            let command = hook.insert_versions(&bump.current, &bump.next)?;
-            if command.len() > 80 {
-                info!("[{}...]", command.chars().take(77).collect::<String>())
-            } else {
-                info!("[{command}]");
-            };
-            let mut cmd = Command::new("sh");
-            cmd.args(["-c", &command]);
-            if let Some(package) = package {
-                cmd.current_dir(&package.path);
+                let command = hook.insert_versions(&bump.current, &bump.next)?;
+                if command.len() > 80 {
+                    info!("[{}...]", command.chars().take(77).collect::<String>())
+                } else {
+                    info!("[{command}]");
+                };
+                let mut cmd = Command::new("sh");
+                cmd.args(["-c", &command]);
+                if let Some(package) = package {
+                    cmd.current_dir(&package.path);
+                }
+                let status = cmd.status().context(command)?;
+                ensure!(status.success(), "hook failed with status {}", status);
+                println!();
             }
-            let status = cmd.status().context(command)?;
-            ensure!(status.success(), "hook failed with status {}", status);
-            println!();
+            Ok(())
+        })();
+
+        if hook_type == HookType::PostBump {
+            return exec_result;
+        }
+
+        // for pre-bump hooks, stash & exit on error
+        self.repository.add_all()?;
+        if let Err(err) = exec_result {
+            self.repository
+                .stash_failed_version(&bump.next)
+                .expect("failed to stash bump hook changes");
+            error!(
+                "{}",
+                BumpHookError {
+                    cause: err.to_string(),
+                    version: bump.next.to_string(),
+                    stash_number: 0,
+                }
+            );
+
+            exit(1);
         }
 
         Ok(())

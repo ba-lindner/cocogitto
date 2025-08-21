@@ -20,7 +20,7 @@ pub(crate) type AuthorSettings = Vec<AuthorSetting>;
 
 mod error;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum HookType {
     PreBump,
     PostBump,

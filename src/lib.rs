@@ -14,7 +14,7 @@ use conventional_commit_parser::parse_footers;
 use once_cell::sync::Lazy;
 
 use conventional::commit::{Commit, CommitConfig};
-use error::BumpError;
+use error::BumpHookError;
 use git::repository::Repository;
 
 use settings::Settings;

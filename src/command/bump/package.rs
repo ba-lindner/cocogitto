@@ -3,13 +3,11 @@ use crate::conventional::changelog::template::PackageContext;
 use crate::conventional::changelog::ReleaseType;
 use crate::conventional::version::Increment;
 use crate::git::rev::filters::CommitRangeFilter;
-use crate::git::tag::Tag;
 use crate::settings::HookType;
 use crate::{CocoGitto, SETTINGS};
 use anyhow::Result;
 use colored::*;
 use log::info;
-use tera::Tera;
 
 impl CocoGitto {
     pub fn create_package_version(&mut self, opts: BumpOptions<WithPkg>) -> Result<()> {
@@ -43,40 +41,10 @@ impl CocoGitto {
                 .write_to_file(path, template, additional_context)?;
         }
 
-        let hook_result = self.run_hooks(HookType::PreBump, &bump, opts.hooks_config);
+        self.run_hooks(HookType::PreBump, &bump, opts.hooks_config)?;
 
-        self.repository.add_all()?;
-        self.unwrap_or_stash_and_exit(&Tag::default(), hook_result);
-
-        let disable_bump_commit = opts.disable_bump_commit || SETTINGS.disable_bump_commit;
-
-        if !disable_bump_commit {
-            let sign = self.repository.gpg_sign();
-
-            if opts.skip_ci || opts.skip_ci_override.is_some() {
-                let skip_ci_pattern = opts.skip_ci_override.unwrap_or(SETTINGS.skip_ci.clone());
-                self.repository.commit(
-                    &format!("chore(version): {} {skip_ci_pattern}", bump.next),
-                    sign,
-                    true,
-                )?;
-            } else {
-                self.repository
-                    .commit(&format!("chore(version): {}", bump.next), sign, true)?;
-            }
-        }
-
-        if let Some(msg_tmpl) = opts.annotated {
-            let mut context = tera::Context::new();
-            context.insert("latest", &bump.current.version.to_string());
-            context.insert("version", &bump.next.version.to_string());
-            let msg = Tera::one_off(&msg_tmpl, &context, false)?;
-            self.repository
-                .create_annotated_tag(&bump.next, &msg, disable_bump_commit)?;
-        } else {
-            self.repository
-                .create_tag(&bump.next, disable_bump_commit)?;
-        }
+        self.create_bump_commit(&bump, &opts)?;
+        self.create_bump_tag(&bump, &opts)?;
 
         self.run_hooks(HookType::PostBump, &bump, opts.hooks_config)?;
 

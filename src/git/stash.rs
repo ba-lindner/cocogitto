@@ -3,7 +3,7 @@ use crate::git::repository::Repository;
 use crate::Tag;
 
 impl Repository {
-    pub(crate) fn stash_failed_version(&mut self, tag: Tag) -> Result<(), Git2Error> {
+    pub(crate) fn stash_failed_version(&mut self, tag: &Tag) -> Result<(), Git2Error> {
         let sig = self.0.signature()?;
         let message = &format!("cog_bump_{tag}");
         self.0
@@ -37,7 +37,7 @@ mod test {
         let statuses = repo.get_statuses()?.0;
 
         assert_that!(statuses).has_length(1);
-        repo.stash_failed_version(Tag::from_str("1.0.0", None)?)?;
+        repo.stash_failed_version(&Tag::from_str("1.0.0", None)?)?;
 
         let statuses = repo.get_statuses()?.0;
         assert_that!(statuses).is_empty();
