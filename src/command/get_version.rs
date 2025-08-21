@@ -1,10 +1,9 @@
+use anyhow::anyhow;
 use anyhow::bail;
 use anyhow::Result;
 use log::warn;
 use semver::Version;
 
-use crate::git::error::TagError;
-use crate::git::tag::TagLookUpOptions;
 use crate::CocoGitto;
 
 impl CocoGitto {
@@ -24,22 +23,12 @@ impl CocoGitto {
             None => None,
         };
 
-        let options = TagLookUpOptions::default();
-        let current_tag = match package {
-            Some(pkg) => self
-                .repository
-                .get_latest_tag(TagLookUpOptions::package(&pkg)),
-            None => self.repository.get_latest_tag(options),
-        };
-
-        let current_version = match current_tag {
-            Ok(tag) => tag.version,
-            Err(TagError::NoTag) => match fallback {
-                Some(input) => input,
-                None => bail!("No version yet"),
-            },
-            Err(err) => bail!("{}", err),
-        };
+        let current_version = self
+            .repository
+            .get_latest_tag(package.as_deref(), false)
+            .map(|tag| tag.version)
+            .or(fallback)
+            .ok_or(anyhow!("No version yet"))?;
 
         warn!("Current version:");
         print!("{current_version}");

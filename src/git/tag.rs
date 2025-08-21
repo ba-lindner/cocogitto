@@ -10,44 +10,6 @@ use crate::git::error::{Git2Error, TagError};
 use crate::git::repository::Repository;
 use crate::SETTINGS;
 
-#[derive(Copy, Clone, Debug, Default)]
-pub struct TagLookUpOptions<'a> {
-    include_pre_release: bool,
-    package_name: Option<&'a str>,
-    packages_only: bool,
-    include_packages: bool,
-}
-
-impl<'a> TagLookUpOptions<'a> {
-    /// Perform a tag lookup with pre-release tag included
-    pub fn include_pre_release(mut self) -> Self {
-        self.include_pre_release = true;
-        self
-    }
-
-    /// Perform a tag lookup, keeping only tags for the given package
-    pub fn package(package: &'a str) -> Self {
-        TagLookUpOptions {
-            include_pre_release: false,
-            package_name: Some(package),
-            packages_only: true,
-            include_packages: true,
-        }
-    }
-
-    /// Perform a tag lookup, keeping only packages tags.
-    pub fn packages_only(mut self) -> Self {
-        self.packages_only = true;
-        self
-    }
-
-    /// Perform a tag lookup, mixing non package and package tags.
-    pub fn include_packages(mut self) -> Self {
-        self.include_packages = true;
-        self
-    }
-}
-
 impl Repository {
     pub(crate) fn create_tag(&self, tag: &Tag, disable_bump_commit: bool) -> Result<(), Git2Error> {
         if !disable_bump_commit && self.is_dirty(true) {
@@ -82,67 +44,35 @@ impl Repository {
     }
 
     /// Get the latest tag, will ignore package tag if on a monorepo
-    pub(crate) fn get_latest_tag(&self, options: TagLookUpOptions) -> Result<Tag, TagError> {
-        let tags: Vec<Tag> = self.tag_lookup(options)?;
-        tags.into_iter().max().ok_or(TagError::NoTag)
+    pub(crate) fn get_latest_tag(
+        &self,
+        package: Option<&str>,
+        include_pre_release: bool,
+    ) -> Option<Tag> {
+        self.tag_lookup(package, include_pre_release).max().cloned()
     }
 
-    pub(crate) fn get_previous_tag(&self, current: &Tag) -> Result<Option<Tag>, TagError> {
-        let mut options = match &current.package {
-            None => TagLookUpOptions::default(),
-            Some(package) => TagLookUpOptions::package(package),
-        };
-
-        if !current.version.pre.is_empty() {
-            options.include_pre_release = true
-        }
-
-        let mut tags: Vec<Tag> = self
-            .tag_lookup(options)?
-            .into_iter()
-            .filter(|tag| tag.package == current.package)
-            .collect();
-
-        tags.sort();
-
-        let Some(current_idx) = tags
-            .iter()
-            .enumerate()
-            .find(|(_, tag)| tag == &current)
-            .map(|(idx, _)| idx)
-        else {
-            return Ok(None);
-        };
-
-        if current_idx == 0 {
-            return Ok(None);
-        }
-
-        Ok(tags.get(current_idx - 1).cloned())
-    }
-
-    pub fn tag_lookup(&self, option: TagLookUpOptions) -> Result<Vec<Tag>, TagError> {
-        let prefix = SETTINGS.tag_prefix.as_ref();
-        let include_pre_release = option.include_pre_release;
-
-        let tag_filter = |tag: &&Tag| {
-            tag.prefix.as_ref() == prefix
-                && tag.package.as_deref() == option.package_name
-                && option.include_packages != tag.package.is_none()
-                && if include_pre_release {
-                    true
-                } else {
-                    tag.version.pre.is_empty()
-                }
-        };
-
-        Ok(self
-            .get_cache()
-            .tags
-            .iter()
-            .filter(tag_filter)
+    pub(crate) fn get_previous_tag(&self, current: &Tag) -> Option<Tag> {
+        self.tag_lookup(current.package.as_deref(), !current.version.pre.is_empty())
+            .filter(|&tag| tag < current)
+            .max()
             .cloned()
-            .collect())
+    }
+
+    pub fn tag_lookup<'t>(
+        &'t self,
+        package: Option<&'t str>,
+        include_pre_release: bool,
+    ) -> impl Iterator<Item = &'t Tag> {
+        let prefix = SETTINGS.tag_prefix.as_ref();
+
+        let tag_filter = move |tag: &&Tag| {
+            tag.prefix.as_ref() == prefix
+                && tag.package.as_deref() == package
+                && (include_pre_release || tag.version.pre.is_empty())
+        };
+
+        self.get_cache().tags.iter().filter(tag_filter)
     }
 }
 
@@ -283,7 +213,8 @@ mod test {
     use semver::Version;
     use speculoos::prelude::*;
 
-    use crate::git::tag::{Tag, TagLookUpOptions};
+    use crate::git::error::TagError;
+    use crate::git::tag::Tag;
     use crate::settings::{MonoRepoPackage, Settings};
     use crate::test_helpers::{commit, git_init_no_gpg, git_tag};
 
@@ -322,7 +253,7 @@ mod test {
         git_tag("v0.2.0")?;
         git_tag("v0.0.1")?;
 
-        let result = repository.tag_lookup(TagLookUpOptions::default())?;
+        let result = repository.tag_lookup(None, false);
 
         let tags: Vec<_> = result.into_iter().map(|tag| tag.to_string()).collect();
 
@@ -492,7 +423,7 @@ mod test {
         )?;
 
         // Act
-        let tag = repo.get_latest_tag(TagLookUpOptions::default())?;
+        let tag = repo.get_latest_tag(None, false).ok_or(TagError::NoTag)?;
 
         // Assert
         assert_that!(tag.to_string()).is_equal_to("0.2.0".to_string());
@@ -510,10 +441,10 @@ mod test {
             git tag 0.2.0;
         )?;
 
-        let tag = repo.get_latest_tag(TagLookUpOptions::default())?;
+        let tag = repo.get_latest_tag(None, false).ok_or(TagError::NoTag)?;
 
         // Act
-        let previous = repo.get_previous_tag(&tag)?.map(|t| t.to_string());
+        let previous = repo.get_previous_tag(&tag).map(|t| t.to_string());
 
         // Assert
         assert_that!(tag.to_string()).is_equal_to("0.2.0".to_string());
@@ -535,10 +466,10 @@ mod test {
             git tag 0.2.0-pre;
         )?;
 
-        let tag = repo.get_latest_tag(TagLookUpOptions::default().include_pre_release())?;
+        let tag = repo.get_latest_tag(None, true).ok_or(TagError::NoTag)?;
 
         // Act
-        let previous = repo.get_previous_tag(&tag)?.map(|t| t.to_string());
+        let previous = repo.get_previous_tag(&tag).map(|t| t.to_string());
 
         // Assert
         assert_that!(tag.to_string()).is_equal_to("0.2.0-pre".to_string());
@@ -558,10 +489,10 @@ mod test {
         )?;
 
         // Act
-        let tag = repo.get_latest_tag(TagLookUpOptions::default());
+        let tag = repo.get_latest_tag(None, false);
 
         // Assert
-        assert_that!(tag).is_err();
+        assert_that!(tag).is_none();
         Ok(())
     }
 
@@ -599,7 +530,9 @@ mod test {
         run_cmd!(git tag)?;
 
         // Act
-        let tag = repo.get_latest_package_tag("lunatic-timer-api")?;
+        let tag = repo
+            .get_latest_tag(Some("lunatic-timer-api"), false)
+            .ok_or(TagError::NoTag)?;
 
         // Assert
         assert_that!(tag.to_string()).is_equal_to("lunatic-timer-api-v0.12.0".to_string());

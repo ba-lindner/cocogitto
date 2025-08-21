@@ -1,8 +1,8 @@
 use crate::conventional::commit::Commit;
 use crate::error::CogCheckReport;
 
+use crate::git::error::TagError;
 use crate::git::rev::revspec::RevSpec;
-use crate::git::tag::TagLookUpOptions;
 use crate::CocoGitto;
 use anyhow::anyhow;
 use anyhow::Result;
@@ -22,7 +22,8 @@ impl CocoGitto {
         } else if check_from_latest_tag {
             let tag = self
                 .repository
-                .get_latest_tag(TagLookUpOptions::default())?;
+                .get_latest_tag(None, false)
+                .ok_or(TagError::NoTag)?;
             RevSpec::from_tag(&tag)
         } else {
             RevSpec::default()

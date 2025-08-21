@@ -1,13 +1,12 @@
 use crate::conventional::changelog::error::ChangelogError;
 use crate::conventional::changelog::release::Release;
 use crate::conventional::commit::Commit;
-use crate::git::error::TagError;
 
 use crate::conventional::version::{Increment, IncrementCommand};
 use crate::git::rev::filters::CommitRangeFilter;
 use crate::git::rev::revspec::RevSpec;
 use crate::git::rev::revwalk::RevwalkCache;
-use crate::git::tag::{Tag, TagLookUpOptions};
+use crate::git::tag::Tag;
 use crate::hook::{Hook, Hooks};
 use crate::settings::{HookType, MonoRepoPackage, Settings};
 use crate::BumpError;
@@ -166,25 +165,16 @@ impl CocoGitto {
         cache: Option<&'_ mut RevwalkCache<'c>>,
         allow_empty: bool,
     ) -> Result<BumpData<P>> {
-        let tag_opts = match filter {
-            CommitRangeFilter::Package(pkg) => TagLookUpOptions::package(pkg),
-            _ => TagLookUpOptions::default(),
-        };
-        let current = match self.repository.get_latest_tag(tag_opts) {
-            Ok(tag) => tag,
-            Err(TagError::NoTag) => {
-                let mut fallback = Tag::default();
-                if let CommitRangeFilter::Package(pkg) = filter {
-                    fallback.package = Some(pkg.to_string());
-                }
-                fallback
-            }
-            Err(other) => bail!(other),
-        };
+        let current = self
+            .repository
+            .get_latest_tag(filter.as_package(), false)
+            .unwrap_or_else(|| Tag {
+                package: filter.as_package().map(ToString::to_string),
+                ..Default::default()
+            });
         let current_prerelease = self
             .repository
-            .get_latest_tag(tag_opts.include_pre_release())
-            .ok()
+            .get_latest_tag(filter.as_package(), true)
             .filter(|tag| *tag > current);
 
         let spec = RevSpec::from_tag(&current);

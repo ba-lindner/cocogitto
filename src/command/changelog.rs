@@ -46,7 +46,7 @@ impl CocoGitto {
                 (
                     vers.clone().into(),
                     self.repository
-                        .get_previous_tag(min)?
+                        .get_previous_tag(min)
                         .map(Into::into)
                         .unwrap_or(cache.first.into()),
                 )

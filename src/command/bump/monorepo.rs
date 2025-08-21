@@ -8,13 +8,12 @@ use crate::conventional::changelog::ReleaseType;
 
 use crate::conventional::version::{Increment, IncrementCommand};
 
-use crate::git::error::TagError;
 use crate::git::rev::filters::CommitRangeFilter;
 use crate::git::rev::revwalk::RevwalkCache;
 use crate::git::tag::Tag;
 use crate::settings::{HookType, MonoRepoPackage};
 use crate::{settings, CocoGitto, SETTINGS};
-use anyhow::{bail, Result};
+use anyhow::Result;
 
 use log::{info, warn};
 use tera::Tera;
@@ -309,11 +308,10 @@ impl CocoGitto {
     pub fn get_current_packages(&self) -> Result<Vec<PackageData<'static>>> {
         let mut packages = vec![];
         for (package_name, package) in SETTINGS.packages.iter() {
-            let tag = match self.repository.get_latest_package_tag(package_name) {
-                Ok(tag) => tag,
-                Err(TagError::NoTag) => Tag::default(),
-                Err(other) => bail!(other),
-            };
+            let tag = self
+                .repository
+                .get_latest_tag(Some(package_name), false)
+                .unwrap_or_default();
             packages.push(PackageData {
                 package_name,
                 package_path: package.path.to_string_lossy().to_string(),

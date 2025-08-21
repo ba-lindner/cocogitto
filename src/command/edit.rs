@@ -1,7 +1,7 @@
 use crate::conventional::commit::{verify, Commit};
 
+use crate::git::error::TagError;
 use crate::git::rev::revspec::RevSpec;
-use crate::git::tag::TagLookUpOptions;
 use crate::{CocoGitto, SETTINGS};
 use anyhow::{anyhow, Result};
 use colored::*;
@@ -17,7 +17,8 @@ impl CocoGitto {
         let range = if from_latest_tag {
             let tag = self
                 .repository
-                .get_latest_tag(TagLookUpOptions::default())?;
+                .get_latest_tag(None, false)
+                .ok_or(TagError::NoTag)?;
             self.repository.revwalk(&RevSpec::from_tag(&tag))?
         } else {
             self.repository.revwalk(&RevSpec::default())?

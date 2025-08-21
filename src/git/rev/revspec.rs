@@ -19,15 +19,6 @@ impl RevSpec {
         }
     }
 
-    pub fn at_tag(repository: &Repository, tag: &Tag, tag_name: &str) -> Result<Self, Git2Error> {
-        let prev = repository.get_previous_tag(tag)?.and_then(|prev| prev.oid);
-        let curr = repository.resolve_commit_oid(tag_name)?;
-        Ok(Self {
-            from: prev,
-            to: Some(curr),
-        })
-    }
-
     pub fn parse(spec: &str, repository: &Repository) -> Result<Self, Git2Error> {
         if let Some((from, to)) = spec.split_once("..") {
             let parse_part = |part: &str| {
@@ -40,7 +31,12 @@ impl RevSpec {
                 to: parse_part(to)?,
             })
         } else if let Ok(tag) = Tag::from_str(spec, None) {
-            Self::at_tag(repository, &tag, spec)
+            let prev = repository.get_previous_tag(&tag).and_then(|prev| prev.oid);
+            let curr = repository.resolve_commit_oid(spec)?;
+            Ok(Self {
+                from: prev,
+                to: Some(curr),
+            })
         } else {
             Err(Git2Error::InvalidCommitRangePattern(spec.to_string()))
         }
