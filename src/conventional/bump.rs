@@ -70,9 +70,8 @@ impl Tag {
 
 impl<'repo> CommitRange<'repo> {
     pub fn get_increment(&self, ignore_breaking: bool) -> Result<Increment, BumpError> {
-        self.commits
-            .iter()
-            .filter_map(|(commit, _)| crate::Commit::from_git_commit(commit).ok())
+        self.iter()
+            .filter_map(|commit| crate::Commit::from_git_commit(commit).ok())
             .map(|commit| commit.increment(ignore_breaking))
             .max()
             .ok_or(BumpError::NoCommitFound)

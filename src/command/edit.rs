@@ -29,10 +29,9 @@ impl CocoGitto {
         let dir = TempDir::new()?;
 
         let errored_commits: Vec<Oid> = range
-            .commits
             .iter()
-            .filter(|(commit, _)| Commit::from_git_commit(commit).is_err())
-            .map(|(commit, _)| commit.id())
+            .filter(|commit| Commit::from_git_commit(commit).is_err())
+            .map(|commit| commit.id())
             .collect();
 
         // Get the last commit oid on the list as a starting point for our rebase

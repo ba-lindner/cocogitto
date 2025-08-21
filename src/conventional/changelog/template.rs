@@ -1,5 +1,5 @@
 use crate::conventional::changelog::error::ChangelogError;
-use crate::git::rev::cache::CommitInfo;
+use crate::conventional::changelog::release::ReleaseVersion;
 
 use serde::Serialize;
 
@@ -133,8 +133,8 @@ pub struct MonoRepoContext<'a> {
 pub struct PackageBumpContext<'a> {
     pub package_name: &'a str,
     pub package_path: String,
-    pub version: CommitInfo,
-    pub from: Option<CommitInfo>,
+    pub version: ReleaseVersion,
+    pub from: Option<ReleaseVersion>,
 }
 
 #[derive(Debug)]

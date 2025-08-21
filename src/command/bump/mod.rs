@@ -1,9 +1,9 @@
+use crate::conventional::changelog::error::ChangelogError;
 use crate::conventional::changelog::release::Release;
 use crate::conventional::commit::Commit;
 use crate::git::error::TagError;
 
 use crate::conventional::version::{Increment, IncrementCommand};
-use crate::git::rev::cache::CommitInfo;
 use crate::git::rev::filters::CommitRangeFilter;
 use crate::git::rev::revspec::RevSpec;
 use crate::git::rev::revwalk::RevwalkCache;
@@ -247,17 +247,15 @@ impl CocoGitto {
             );
         }
 
-        let release = Release::try_from(range);
-        let mut release = if allow_empty {
-            release.unwrap_or_else(|_| {
-                let mut rel = Release::empty();
-                rel.from = CommitInfo::from_tag(&current);
-                rel
-            })
-        } else {
-            release?
-        };
-        release.version = CommitInfo::from_tag(&next);
+        let mut release = Release::build_single(range, filter);
+        if release.commits.is_empty() {
+            if allow_empty {
+                release.from = current.clone().into();
+            } else {
+                bail!(ChangelogError::EmptyRelease);
+            }
+        }
+        release.version = next.clone().into();
 
         Ok(BumpData {
             current,

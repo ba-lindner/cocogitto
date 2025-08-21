@@ -1,5 +1,5 @@
 use crate::{
-    git::{error::Git2Error, rev::CommitRange},
+    git::{error::Git2Error, rev::CommitRange, tag::Tag},
     settings::MonoRepoPackage,
     SETTINGS,
 };
@@ -69,6 +69,23 @@ pub enum CommitRangeFilter<'p> {
     Package(&'p str),
 }
 
+impl CommitRangeFilter<'_> {
+    pub fn as_package(&self) -> Option<&str> {
+        match self {
+            CommitRangeFilter::None | CommitRangeFilter::Global => None,
+            CommitRangeFilter::Package(package) => Some(package),
+        }
+    }
+
+    pub fn matches_tag(&self, tag: &Tag) -> bool {
+        match self {
+            CommitRangeFilter::None => true,
+            CommitRangeFilter::Global => tag.package.is_none(),
+            CommitRangeFilter::Package(package) => tag.package.as_deref() == Some(package),
+        }
+    }
+}
+
 impl CommitRange<'_> {
     /// Apply `SETTINGS.ignore_merge_commits` and `SETTINGS.ignore_fixup_commits`
     pub fn apply_ignore_settings(&mut self) {
@@ -85,11 +102,10 @@ impl CommitRange<'_> {
         ignore_fixup_commits: bool,
     ) {
         if ignore_merge_commits {
-            self.commits
-                .retain(|(commit, _)| commit.parent_count() <= 1);
+            self.commits.retain(|commit| commit.parent_count() <= 1);
         }
         if ignore_fixup_commits {
-            self.commits.retain(|(commit, _)| {
+            self.commits.retain(|commit| {
                 commit.message().is_none()
                     || commit.message().is_some_and(|msg| {
                         !msg.starts_with("fixup!")
@@ -110,26 +126,20 @@ impl CommitRange<'_> {
                     .map(PackagePathFilter::from_package)
                     .collect();
 
-                self.filter_impl(
-                    true,
-                    move |file| {
-                        file.path().is_some_and(|path| {
-                            package_filter.iter().all(|filter| !filter.is_match(path))
-                        })
-                    },
-                    None,
-                )?;
+                self.filter_impl(true, move |file| {
+                    file.path().is_some_and(|path| {
+                        package_filter.iter().all(|filter| !filter.is_match(path))
+                    })
+                })?;
             }
             CommitRangeFilter::Package(package) => {
                 let path_filter = PackagePathFilter::from_package(
                     SETTINGS.packages.get(package).expect("package exists"),
                 );
 
-                self.filter_impl(
-                    false,
-                    move |file| file.path().is_some_and(|path| path_filter.is_match(path)),
-                    Some(package),
-                )?;
+                self.filter_impl(false, move |file| {
+                    file.path().is_some_and(|path| path_filter.is_match(path))
+                })?;
             }
         }
         Ok(())
@@ -149,12 +159,11 @@ impl CommitRange<'_> {
         &mut self,
         retain_first: bool,
         file_filter: impl Fn(git2::DiffFile) -> bool,
-        package: Option<&str>,
     ) -> Result<(), Git2Error> {
         let should_retain = self
             .commits
             .iter()
-            .map(|(commit, _)| {
+            .map(|commit| {
                 let parent = commit.parent(0).and_then(|commit| commit.tree()).ok();
                 if retain_first && parent.is_none() {
                     return Ok(true);
@@ -177,9 +186,6 @@ impl CommitRange<'_> {
             idx += 1;
             res
         });
-        for (_, info) in &mut self.commits {
-            info.tags.retain(|tag| tag.package.as_deref() == package);
-        }
         Ok(())
     }
 }

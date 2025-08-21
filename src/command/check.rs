@@ -32,9 +32,8 @@ impl CocoGitto {
         commit_range.filter_merge_fixup_commits(ignore_merge_commits, ignore_fixup_commits);
 
         let errors: Vec<_> = commit_range
-            .commits
             .iter()
-            .filter_map(|(commit, _)| Commit::from_git_commit(commit).err())
+            .filter_map(|commit| Commit::from_git_commit(commit).err())
             .collect();
 
         if errors.is_empty() {

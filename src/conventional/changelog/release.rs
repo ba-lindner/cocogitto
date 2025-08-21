@@ -1,21 +1,83 @@
+use std::fmt::Display;
+
 use chrono::{NaiveDateTime, Utc};
 use conventional_commit_parser::commit::Footer;
 use git2::Oid;
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 
 use crate::conventional::commit::Commit;
 use crate::git::rev::cache::CommitInfo;
+use crate::git::rev::filters::CommitRangeFilter;
 use crate::git::rev::CommitRange;
+use crate::git::tag::Tag;
 use crate::settings;
 use colored::Colorize;
 
 use crate::conventional::changelog::error::ChangelogError;
 use log::warn;
 
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct ReleaseVersion {
+    #[serde(serialize_with = "serialize_oid")]
+    pub id: Oid,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tag: Option<Tag>,
+}
+
+fn serialize_oid<S: Serializer>(oid: &Oid, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_str(&oid.to_string())
+}
+
+impl ReleaseVersion {
+    fn empty() -> Self {
+        Self {
+            id: Oid::zero(),
+            tag: None,
+        }
+    }
+}
+
+impl CommitInfo {
+    pub fn into_release_version(self, filter: CommitRangeFilter<'_>) -> ReleaseVersion {
+        ReleaseVersion {
+            id: self.oid,
+            tag: self.tags.into_iter().find(|tag| filter.matches_tag(tag)),
+        }
+    }
+}
+
+impl From<Oid> for ReleaseVersion {
+    fn from(value: Oid) -> Self {
+        Self {
+            id: value,
+            tag: None,
+        }
+    }
+}
+
+impl From<Tag> for ReleaseVersion {
+    fn from(value: Tag) -> Self {
+        Self {
+            id: value.oid.unwrap_or(Oid::zero()),
+            tag: Some(value),
+        }
+    }
+}
+
+impl Display for ReleaseVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(tag) = &self.tag {
+            tag.fmt(f)
+        } else {
+            self.id.fmt(f)
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct Release {
-    pub version: CommitInfo,
-    pub from: CommitInfo,
+    pub version: ReleaseVersion,
+    pub from: ReleaseVersion,
     pub date: NaiveDateTime,
     pub commits: Vec<ChangelogCommit>,
     pub previous: Option<Box<Release>>,
@@ -24,51 +86,54 @@ pub struct Release {
 impl Release {
     pub fn empty() -> Self {
         Self {
-            version: CommitInfo::new(Oid::zero()),
-            from: CommitInfo::new(Oid::zero()),
+            version: ReleaseVersion::empty(),
+            from: ReleaseVersion::empty(),
             date: Utc::now().naive_local(),
             commits: Vec::new(),
             previous: None,
         }
     }
-}
 
-impl TryFrom<CommitRange<'_>> for Release {
-    type Error = ChangelogError;
-
-    fn try_from(mut range: CommitRange<'_>) -> Result<Self, Self::Error> {
-        let from = range.from();
-        range.commits.reverse();
+    pub fn build(
+        range: CommitRange<'_>,
+        filter: CommitRangeFilter<'_>,
+    ) -> Result<Self, ChangelogError> {
         range
-            .commits
-            .split_inclusive(|(_, info)| !info.tags.is_empty())
-            .filter_map(|commits| {
-                let version = &commits.last()?.1;
-                let commits = commits.iter().map(|(commit, _)| commit).rev();
-                Some((version, commits))
+            .split_at_tags(filter)
+            .into_iter()
+            .rev()
+            .map(|range| Self::build_single(range, filter))
+            .fold(None, |prev, mut curr| {
+                if let Some(previous) = prev {
+                    curr.set_previous(previous);
+                }
+                Some(curr)
             })
-            .fold((None, from), |(prev, from), (version, commits)| {
-                (
-                    Some(Release {
-                        version: version.clone(),
-                        from,
-                        date: Utc::now().naive_local(),
-                        commits: commits
-                            .filter_map(|commit| {
-                                Commit::from_git_commit(commit)
-                                    .inspect_err(|err| warn!("{}", err.to_string().red()))
-                                    .ok()
-                            })
-                            .filter(|commit| !commit.should_omit())
-                            .map(ChangelogCommit::from)
-                            .collect(),
-                        previous: prev.map(Box::new),
-                    }),
-                    version.clone(),
-                )
-            })
-            .0
             .ok_or(ChangelogError::EmptyRelease)
+    }
+
+    pub fn build_single(range: CommitRange<'_>, filter: CommitRangeFilter<'_>) -> Self {
+        Self {
+            version: range.to().into_release_version(filter),
+            from: range.from().into_release_version(filter),
+            date: Utc::now().naive_local(),
+            commits: range
+                .into_iter()
+                .filter_map(|commit| {
+                    Commit::from_git_commit(&commit)
+                        .inspect_err(|err| warn!("{}", err.to_string().red()))
+                        .ok()
+                })
+                .filter(|commit| !commit.should_omit())
+                .map(ChangelogCommit::from)
+                .collect(),
+            previous: None,
+        }
+    }
+
+    fn set_previous(&mut self, previous: Release) {
+        self.from = previous.version.clone();
+        self.previous = Some(Box::new(previous));
     }
 }
 
@@ -114,7 +179,7 @@ mod test {
     use pretty_assertions::assert_eq;
     use speculoos::prelude::*;
 
-    use crate::conventional::changelog::release::{ChangelogCommit, Release};
+    use crate::conventional::changelog::release::{ChangelogCommit, Release, ReleaseVersion};
     use crate::conventional::changelog::renderer::Renderer;
     use crate::conventional::changelog::template::{
         MonoRepoContext, PackageBumpContext, PackageContext, RemoteContext, Template, TemplateKind,
@@ -122,14 +187,14 @@ mod test {
     use crate::conventional::commit::Commit;
     use crate::git::repository::Repository;
 
-    use crate::git::rev::cache::CommitInfo;
+    use crate::git::rev::filters::CommitRangeFilter;
     use crate::git::tag::Tag;
 
     #[test]
     fn should_get_a_release() -> anyhow::Result<()> {
         let repo = Repository::open(".")?;
         let iter = repo.revwalk_pattern("..")?;
-        let release = Release::try_from(iter);
+        let release = Release::build(iter, CommitRangeFilter::None);
         assert_that!(release)
             .is_ok()
             .matches(|r| !r.commits.is_empty());
@@ -546,26 +611,38 @@ mod test {
                 PackageBumpContext {
                     package_name: "one",
                     package_path: "crates/one".to_string(),
-                    version: CommitInfo::from_tag(&Tag::from_str(
+                    version: Tag::from_str(
                         "0.1.0",
                         Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
-                    )?),
-                    from: Some(CommitInfo::from_tag(&Tag::from_str(
-                        "0.2.0",
-                        Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
-                    )?)),
+                    )?
+                    .into(),
+                    from: Some(
+                        Tag::from_str(
+                            "0.2.0",
+                            Some(
+                                Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap(),
+                            ),
+                        )?
+                        .into(),
+                    ),
                 },
                 PackageBumpContext {
                     package_name: "two",
                     package_path: "crates/two".to_string(),
-                    version: CommitInfo::from_tag(&Tag::from_str(
+                    version: Tag::from_str(
                         "0.2.0",
                         Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
-                    )?),
-                    from: Some(CommitInfo::from_tag(&Tag::from_str(
-                        "0.3.0",
-                        Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
-                    )?)),
+                    )?
+                    .into(),
+                    from: Some(
+                        Tag::from_str(
+                            "0.3.0",
+                            Some(
+                                Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap(),
+                            ),
+                        )?
+                        .into(),
+                    ),
                 },
             ],
         });
@@ -580,19 +657,21 @@ mod test {
                 PackageBumpContext {
                     package_name: "one",
                     package_path: "crates/one".to_string(),
-                    version: CommitInfo::from_tag(&Tag::from_str(
+                    version: Tag::from_str(
                         "0.1.0",
                         Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
-                    )?),
+                    )?
+                    .into(),
                     from: None,
                 },
                 PackageBumpContext {
                     package_name: "two",
                     package_path: "crates/two".to_string(),
-                    version: CommitInfo::from_tag(&Tag::from_str(
+                    version: Tag::from_str(
                         "0.2.0",
                         Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
-                    )?),
+                    )?
+                    .into(),
                     from: None,
                 },
             ],
@@ -621,17 +700,13 @@ mod test {
             let from_oid = Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap();
             let from = Tag::from_str("0.1.0", Some(from_oid)).unwrap();
             Release {
-                version: CommitInfo {
-                    is_head: false,
-                    is_first: false,
-                    oid: vers_oid,
-                    tags: vec![version],
+                version: ReleaseVersion {
+                    id: vers_oid,
+                    tag: Some(version),
                 },
-                from: CommitInfo {
-                    is_head: false,
-                    is_first: false,
-                    oid: from_oid,
-                    tags: vec![from],
+                from: ReleaseVersion {
+                    id: from_oid,
+                    tag: Some(from),
                 },
                 date,
                 commits: vec![

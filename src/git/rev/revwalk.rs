@@ -23,16 +23,10 @@ impl Repository {
         } else {
             revwalk.push_head()?;
         }
-        let cache = self.get_cache();
-        let mut res = Vec::new();
-        for oid in revwalk {
-            let oid = oid?;
-            let commit = self.0.find_commit(oid)?;
-            let info = cache.get_info(oid).into_owned();
-            res.push((commit, info));
-        }
         Ok(CommitRange {
-            commits: res,
+            commits: revwalk
+                .map(|oid| oid.and_then(|oid| self.0.find_commit(oid)))
+                .collect::<Result<_, _>>()?,
             repository: self,
         })
     }
@@ -67,21 +61,12 @@ mod test {
     use crate::conventional::changelog::release::Release;
     use crate::git::repository::Repository;
     use crate::git::rev::cache::CommitInfo;
-    use crate::git::rev::CommitRange;
+    use crate::git::rev::filters::CommitRangeFilter;
     use crate::git::tag::{Tag, TagLookUpOptions};
     use crate::settings::{MonoRepoPackage, Settings};
     use crate::test_helpers::{commit, git_init_no_gpg, git_tag};
 
     const COCOGITTO_REPOSITORY: &str = env!("CARGO_MANIFEST_DIR");
-
-    impl<'repo> CommitRange<'repo> {
-        pub fn to(&self) -> CommitInfo {
-            self.commits
-                .first()
-                .map(|(_, info)| info.clone())
-                .unwrap_or(CommitInfo::new(Oid::zero()))
-        }
-    }
 
     #[test]
     fn all_commits() -> Result<()> {
@@ -108,17 +93,12 @@ mod test {
         let range = repo.revwalk_pattern("0.1.0")?;
 
         // Act
-        let release = Release::try_from(range)?;
+        let release = Release::build(range, CommitRangeFilter::None)?;
 
         // Assert
         assert_that!(release.previous).is_none();
-        assert_that!(release.version.oid).is_equal_to(&Oid::from_str(&three)?);
-        assert_that!(release.from).is_equal_to(CommitInfo {
-            is_head: false,
-            is_first: true,
-            oid: Oid::from_str(&one)?,
-            tags: Vec::new(),
-        });
+        assert_that!(release.version.id).is_equal_to(&Oid::from_str(&three)?);
+        assert_that!(release.from).is_equal_to(&Oid::from_str(&one)?.into());
 
         let expected_commits: Vec<String> = release
             .commits
@@ -146,7 +126,7 @@ mod test {
         let range = repo.revwalk_pattern("..0.2.0")?;
 
         // Act
-        let release = Release::try_from(range)?;
+        let release = Release::build(range, CommitRangeFilter::None)?;
 
         // Assert
         assert_that!(release.previous).is_some().matches(|_child| {
@@ -183,7 +163,7 @@ mod test {
         let range = repo.revwalk_pattern("0.32.1..0.32.3")?;
 
         // Act
-        let release = Release::try_from(range)?;
+        let release = Release::build(range, CommitRangeFilter::None)?;
 
         // Assert
         assert_that!(release.version.to_string()).is_equal_to("0.32.3".to_string());
@@ -281,7 +261,7 @@ mod test {
         asserting!("package with changes have some commits")
             .that(&commit_range_package.commits)
             .mapped_contains(
-                |(commit, _)| commit.message(),
+                |commit| commit.message(),
                 &Some("feat: commit to non-ignored path\n"),
             );
 
@@ -322,7 +302,7 @@ mod test {
         asserting!("package with shared changes should have some commits for HEAD~1 revspec")
             .that(&commit_range_package.commits)
             .mapped_contains(
-                |(commit, _)| commit.message(),
+                |commit| commit.message(),
                 &Some("feat: commit to extra included path\n"),
             );
 
@@ -348,7 +328,7 @@ mod test {
         )
         .that(&commit_range_package.commits)
         .mapped_contains(
-            |(commit, _)| commit.message(),
+            |commit| commit.message(),
             &Some("feat: commit to extra included file\n"),
         );
 
@@ -495,7 +475,7 @@ mod test {
         let range = repo.revwalk_pattern("..")?;
 
         // Act
-        let mut release = Release::try_from(range)?;
+        let mut release = Release::build(range, CommitRangeFilter::None)?;
         let mut count = 0;
 
         while let Some(previous) = release.previous {
@@ -524,7 +504,7 @@ mod test {
         let range = repo.revwalk_pattern(&format!("{}..", &one[0..7]))?;
 
         // Act
-        let release = Release::try_from(range)?;
+        let release = Release::build(range, CommitRangeFilter::None)?;
 
         // Assert
         let actual_oids: Vec<String> = release
@@ -555,7 +535,7 @@ mod test {
         let range = repo.revwalk_pattern(&format!("{}..", &from[0..7]))?;
 
         // Act
-        let release = Release::try_from(range)?;
+        let release = Release::build(range, CommitRangeFilter::None)?;
 
         // Assert
         let head_to_v1: Vec<String> = release

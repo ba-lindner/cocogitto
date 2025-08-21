@@ -11,9 +11,7 @@ impl CocoGitto {
         let mut range = self.repository.revwalk(&RevSpec::default())?;
         range.apply_ignore_settings();
         let logs = range
-            .commits
             .iter()
-            .map(|(commit, _)| commit)
             // Remove merge commits
             .filter(|commit| filters.filter_git2_commit(commit))
             .map(|commit| Commit::from_git_commit(commit))

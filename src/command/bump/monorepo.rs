@@ -9,7 +9,6 @@ use crate::conventional::changelog::ReleaseType;
 use crate::conventional::version::{Increment, IncrementCommand};
 
 use crate::git::error::TagError;
-use crate::git::rev::cache::CommitInfo;
 use crate::git::rev::filters::CommitRangeFilter;
 use crate::git::rev::revwalk::RevwalkCache;
 use crate::git::tag::Tag;
@@ -147,11 +146,11 @@ impl CocoGitto {
             template_context.push(PackageBumpContext {
                 package_name: bump.package.0,
                 package_path: bump.package.1.path.display().to_string(),
-                version: CommitInfo::from_tag(&bump.next),
+                version: bump.next.clone().into(),
                 from: Some(if bump.current.is_zero() {
-                    CommitInfo::new(self.repository.get_cache().first)
+                    self.repository.get_cache().first.into()
                 } else {
-                    CommitInfo::from_tag(&bump.current)
+                    bump.current.clone().into()
                 }),
             })
         }
@@ -245,7 +244,7 @@ impl CocoGitto {
             template_context.push(PackageBumpContext {
                 package_name: bump.package_name,
                 package_path: bump.package_path,
-                version: CommitInfo::from_tag(&bump.version),
+                version: bump.version.into(),
                 from: None,
             })
         }
