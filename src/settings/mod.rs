@@ -516,7 +516,7 @@ impl Settings {
         default_types
     }
 
-    pub fn get_template_context(&self) -> Option<RemoteContext> {
+    pub fn get_remote_context(&self) -> Option<RemoteContext> {
         let remote = self.changelog.remote.as_ref().cloned();
 
         let repository = self.changelog.repository.as_ref().cloned();
@@ -527,14 +527,12 @@ impl Settings {
     }
 
     pub fn get_changelog_template(&self) -> Result<Template, ChangelogError> {
-        let context = self.get_template_context();
         let template = self.changelog.template.as_deref().unwrap_or("default");
 
-        Template::from_arg(template, context)
+        Template::new(template)
     }
 
     pub fn get_package_changelog_template(&self) -> Result<Template, ChangelogError> {
-        let context = self.get_template_context();
         let template = self
             .changelog
             .package_template
@@ -547,11 +545,10 @@ impl Settings {
             template => template,
         };
 
-        Template::from_arg(template, context)
+        Template::new(template)
     }
 
     pub fn get_monorepo_changelog_template(&self) -> Result<Template, ChangelogError> {
-        let context = self.get_template_context();
         let template = self
             .changelog
             .template
@@ -564,7 +561,7 @@ impl Settings {
             template => template,
         };
 
-        Template::from_arg(template, context)
+        Template::new(template)
     }
 
     pub fn monorepo_separator(&self) -> Option<&str> {

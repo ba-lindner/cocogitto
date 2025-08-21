@@ -1,14 +1,11 @@
 use crate::conventional::changelog::release::Release;
 use crate::conventional::changelog::template::MonoRepoContext;
 use crate::conventional::changelog::template::PackageBumpContext;
-use crate::conventional::changelog::template::Template;
 
-use crate::conventional::changelog::ReleaseType;
 use crate::git::rev::filters::CommitRangeFilter;
 use crate::git::rev::revspec::RevSpec;
 use crate::CocoGitto;
 use crate::SETTINGS;
-use anyhow::anyhow;
 use anyhow::Result;
 
 impl CocoGitto {
@@ -20,7 +17,7 @@ impl CocoGitto {
         Release::build(commit_range, CommitRangeFilter::None).map_err(Into::into)
     }
 
-    pub fn get_monorepo_changelog(&self, pattern: &str, template: Template) -> Result<String> {
+    pub fn get_monorepo_changelog(&self, pattern: &str) -> Result<(Release, MonoRepoContext<'_>)> {
         let mut packages = Vec::new();
 
         let spec = RevSpec::parse(pattern, &self.repository)?;
@@ -72,16 +69,6 @@ impl CocoGitto {
         };
 
         let range = range.global()?;
-        Release::build(range, CommitRangeFilter::Global)?
-            .as_markdown(template, ReleaseType::MonoRepo(context))
-            .map_err(Into::into)
-    }
-
-    pub fn get_changelog_at_tag(&self, tag: &str, template: Template) -> Result<String> {
-        let changelog = self.get_changelog(tag, false)?;
-
-        changelog
-            .as_markdown(template, ReleaseType::Standard)
-            .map_err(|err| anyhow!(err))
+        Ok((Release::build(range, CommitRangeFilter::Global)?, context))
     }
 }

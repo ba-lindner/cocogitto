@@ -182,7 +182,7 @@ mod test {
     use crate::conventional::changelog::release::{ChangelogCommit, Release, ReleaseVersion};
     use crate::conventional::changelog::renderer::Renderer;
     use crate::conventional::changelog::template::{
-        MonoRepoContext, PackageBumpContext, PackageContext, RemoteContext, Template, TemplateKind,
+        MonoRepoContext, PackageBumpContext, PackageContext, RemoteContext, Template,
     };
     use crate::conventional::commit::Commit;
     use crate::git::repository::Repository;
@@ -205,14 +205,14 @@ mod test {
     fn should_render_default_template() -> Result<()> {
         // Arrange
         let release = Release::fixture();
-        let mut renderer = Renderer::default();
+        let renderer = Renderer::default();
 
         // Act
         let changelog = renderer.render(&release)?;
 
         // Assert
         assert_eq!(
-            changelog,
+            changelog.0,
             indoc! {
                 "## 1.0.0 - 2015-09-05
                 #### Bug Fixes
@@ -231,17 +231,14 @@ mod test {
     fn should_render_full_hash_template() -> Result<()> {
         // Arrange
         let release = Release::fixture();
-        let mut renderer = Renderer::try_new(Template {
-            remote_context: None,
-            kind: TemplateKind::FullHash,
-        })?;
+        let renderer = Renderer::new(Template::FULL_HASH)?;
 
         // Act
         let changelog = renderer.render(&release)?;
 
         // Assert
         assert_eq!(
-            changelog,
+            changelog.0,
             indoc! {
                 "#### Bug Fixes
                 - 17f7e23081db15e9318aeb37529b1d473cf41cbe - **(parser)** fix parser implementation - @oknozor
@@ -260,21 +257,14 @@ mod test {
     fn should_render_github_template() -> Result<()> {
         // Arrange
         let release = Release::fixture();
-        let mut renderer = Renderer::try_new(Template {
-            remote_context: RemoteContext::try_new(
-                Some("github.com".into()),
-                Some("cocogitto".into()),
-                Some("cocogitto".into()),
-            ),
-            kind: TemplateKind::Remote,
-        })?;
+        let renderer = Renderer::new(Template::REMOTE)?.with_context(RemoteContext::fixture());
 
         // Act
         let changelog = renderer.render(&release)?;
 
         // Assert
         assert_eq!(
-            changelog,
+            changelog.0,
             indoc! {
                 "## [1.0.0](https://github.com/cocogitto/cocogitto/compare/0.1.0..1.0.0) - 2015-09-05
                 #### Bug Fixes
@@ -293,19 +283,16 @@ mod test {
     fn should_render_template_monorepo() -> Result<()> {
         // Arrange
         let release = Release::fixture();
-        let renderer = Renderer::try_new(Template {
-            remote_context: None,
-            kind: TemplateKind::MonorepoDefault,
-        })?;
+        let renderer = Renderer::new(Template::MONOREPO_DEFAULT)?;
 
-        let mut renderer = monorepo_renderer(renderer)?;
+        let renderer = monorepo_renderer(renderer)?;
 
         // Act
         let changelog = renderer.render(&release)?;
 
         // Assert
         assert_eq!(
-            changelog,
+            changelog.0,
             indoc! {
                 "## 1.0.0 - 2015-09-05
                 ### Package updates
@@ -328,19 +315,16 @@ mod test {
     fn should_render_template_monorepo_for_manual_bump() -> Result<()> {
         // Arrange
         let release = Release::fixture();
-        let renderer = Renderer::try_new(Template {
-            remote_context: None,
-            kind: TemplateKind::MonorepoDefault,
-        })?;
+        let renderer = Renderer::new(Template::MONOREPO_DEFAULT)?;
 
-        let mut renderer = monorepo_manual_bump_rendered(renderer)?;
+        let renderer = monorepo_manual_bump_rendered(renderer)?;
 
         // Act
         let changelog = renderer.render(&release)?;
 
         // Assert
         assert_eq!(
-            changelog,
+            changelog.0,
             indoc! {
                 "## 1.0.0 - 2015-09-05
                 ### Packages
@@ -363,19 +347,16 @@ mod test {
     fn should_render_full_hash_template_monorepo() -> Result<()> {
         // Arrange
         let release = Release::fixture();
-        let renderer = Renderer::try_new(Template {
-            remote_context: None,
-            kind: TemplateKind::MonorepoFullHash,
-        })?;
+        let renderer = Renderer::new(Template::MONOREPO_FULL_HASH)?;
 
-        let mut renderer = monorepo_renderer(renderer)?;
+        let renderer = monorepo_renderer(renderer)?;
 
         // Act
         let changelog = renderer.render(&release)?;
 
         // Assert
         assert_eq!(
-            changelog,
+            changelog.0,
             indoc! {
                 "### Package updates
                 - one bumped to 0.1.0
@@ -398,19 +379,16 @@ mod test {
     fn should_render_full_hash_template_manual_monorepo() -> Result<()> {
         // Arrange
         let release = Release::fixture();
-        let renderer = Renderer::try_new(Template {
-            remote_context: None,
-            kind: TemplateKind::MonorepoFullHash,
-        })?;
+        let renderer = Renderer::new(Template::MONOREPO_FULL_HASH)?;
 
-        let mut renderer = monorepo_manual_bump_rendered(renderer)?;
+        let renderer = monorepo_manual_bump_rendered(renderer)?;
 
         // Act
         let changelog = renderer.render(&release)?;
 
         // Assert
         assert_eq!(
-            changelog,
+            changelog.0,
             indoc! {
                 "### Packages
                 - one locked to 0.1.0
@@ -433,23 +411,17 @@ mod test {
     fn should_render_remote_template_monorepo() -> Result<()> {
         // Arrange
         let release = Release::fixture();
-        let renderer = Renderer::try_new(Template {
-            remote_context: RemoteContext::try_new(
-                Some("github.com".into()),
-                Some("cocogitto".into()),
-                Some("cocogitto".into()),
-            ),
-            kind: TemplateKind::MonorepoRemote,
-        })?;
+        let renderer =
+            Renderer::new(Template::MONOREPO_REMOTE)?.with_context(RemoteContext::fixture());
 
-        let mut renderer = monorepo_renderer(renderer)?;
+        let renderer = monorepo_renderer(renderer)?;
 
         // Act
         let changelog = renderer.render(&release)?;
 
         // Assert
         assert_eq!(
-            changelog,
+            changelog.0,
             indoc! {
                 "## [1.0.0](https://github.com/cocogitto/cocogitto/compare/0.1.0..1.0.0) - 2015-09-05
                 ### Package updates
@@ -472,19 +444,16 @@ mod test {
     fn should_render_template_package() -> Result<()> {
         // Arrange
         let release = Release::fixture();
-        let renderer = Renderer::try_new(Template {
-            remote_context: None,
-            kind: TemplateKind::PackageDefault,
-        })?;
+        let renderer = Renderer::new(Template::PACKAGE_DEFAULT)?;
 
-        let mut renderer = package_renderer(renderer)?;
+        let renderer = package_renderer(renderer)?;
 
         // Act
         let changelog = renderer.render(&release)?;
 
         // Assert
         assert_eq!(
-            changelog,
+            changelog.0,
             indoc! {
                 "## 1.0.0 - 2015-09-05
                 #### Bug Fixes
@@ -503,19 +472,16 @@ mod test {
     fn should_render_full_hash_template_package() -> Result<()> {
         // Arrange
         let release = Release::fixture();
-        let renderer = Renderer::try_new(Template {
-            remote_context: None,
-            kind: TemplateKind::PackageFullHash,
-        })?;
+        let renderer = Renderer::new(Template::PACKAGE_FULL_HASH)?;
 
-        let mut renderer = package_renderer(renderer)?;
+        let renderer = package_renderer(renderer)?;
 
         // Act
         let changelog = renderer.render(&release)?;
 
         // Assert
         assert_eq!(
-            changelog,
+            changelog.0,
             indoc! {
                 "#### Bug Fixes
                 - 17f7e23081db15e9318aeb37529b1d473cf41cbe - **(parser)** fix parser implementation - @oknozor
@@ -534,23 +500,17 @@ mod test {
     fn should_render_remote_template_package() -> Result<()> {
         // Arrange
         let release = Release::fixture();
-        let renderer = Renderer::try_new(Template {
-            remote_context: RemoteContext::try_new(
-                Some("github.com".into()),
-                Some("cocogitto".into()),
-                Some("cocogitto".into()),
-            ),
-            kind: TemplateKind::PackageRemote,
-        })?;
+        let renderer =
+            Renderer::new(Template::PACKAGE_REMOTE)?.with_context(RemoteContext::fixture());
 
-        let mut renderer = package_renderer(renderer)?;
+        let renderer = package_renderer(renderer)?;
 
         // Act
         let changelog = renderer.render(&release)?;
 
         // Assert
         assert_eq!(
-            changelog,
+            changelog.0,
             indoc! {
                 "## [1.0.0](https://github.com/cocogitto/cocogitto/compare/0.1.0..1.0.0) - 2015-09-05
                 #### Bug Fixes
@@ -569,23 +529,17 @@ mod test {
     fn should_render_remote_template_monorepo_for_manual_bump() -> Result<()> {
         // Arrange
         let release = Release::fixture();
-        let renderer = Renderer::try_new(Template {
-            remote_context: RemoteContext::try_new(
-                Some("github.com".into()),
-                Some("cocogitto".into()),
-                Some("cocogitto".into()),
-            ),
-            kind: TemplateKind::MonorepoRemote,
-        })?;
+        let renderer =
+            Renderer::new(Template::MONOREPO_REMOTE)?.with_context(RemoteContext::fixture());
 
-        let mut renderer = monorepo_manual_bump_rendered(renderer)?;
+        let renderer = monorepo_manual_bump_rendered(renderer)?;
 
         // Act
         let changelog = renderer.render(&release)?;
 
         // Assert
         assert_eq!(
-            changelog,
+            changelog.0,
             indoc! {
                 "## [1.0.0](https://github.com/cocogitto/cocogitto/compare/0.1.0..1.0.0) - 2015-09-05
                 ### Packages
@@ -605,7 +559,7 @@ mod test {
     }
 
     fn monorepo_renderer(renderer: Renderer) -> Result<Renderer> {
-        let renderer = renderer.with_monorepo_context(MonoRepoContext {
+        let renderer = renderer.with_context(MonoRepoContext {
             package_lock: false,
             packages: vec![
                 PackageBumpContext {
@@ -651,7 +605,7 @@ mod test {
     }
 
     fn monorepo_manual_bump_rendered(renderer: Renderer) -> Result<Renderer> {
-        let renderer = renderer.with_monorepo_context(MonoRepoContext {
+        let renderer = renderer.with_context(MonoRepoContext {
             package_lock: true,
             packages: vec![
                 PackageBumpContext {
@@ -681,11 +635,22 @@ mod test {
     }
 
     fn package_renderer(renderer: Renderer) -> Result<Renderer> {
-        let renderer = renderer.with_package_context(PackageContext {
+        let renderer = renderer.with_context(PackageContext {
             package_name: "one",
         });
 
         Ok(renderer)
+    }
+
+    impl RemoteContext {
+        fn fixture() -> Self {
+            RemoteContext::try_new(
+                Some("github.com".into()),
+                Some("cocogitto".into()),
+                Some("cocogitto".into()),
+            )
+            .expect("all fields set")
+        }
     }
 
     impl Release {

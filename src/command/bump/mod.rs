@@ -1,5 +1,7 @@
 use crate::conventional::changelog::error::ChangelogError;
 use crate::conventional::changelog::release::Release;
+use crate::conventional::changelog::template::{PackageContext, ToContext};
+use crate::conventional::changelog::Renderer;
 use crate::conventional::commit::Commit;
 
 use crate::conventional::version::{Increment, IncrementCommand};
@@ -233,6 +235,49 @@ impl CocoGitto {
             release,
             package: opts.package,
         })
+    }
+
+    fn render_changelog<P: MaybePkg>(
+        &self,
+        bump: &BumpData<P>,
+        context: impl ToContext,
+    ) -> Result<()> {
+        if SETTINGS.disable_changelog {
+            return Ok(());
+        }
+
+        bump.release.pretty_print_bump_summary()?;
+
+        let template = if SETTINGS.packages.is_empty() {
+            SETTINGS.get_changelog_template()?
+        } else if bump.package.maybe_pkg().is_some() {
+            SETTINGS.get_package_changelog_template()?
+        } else {
+            SETTINGS.get_monorepo_changelog_template()?
+        };
+
+        let mut renderer = Renderer::new(template)?;
+
+        if let Some(remote) = SETTINGS.get_remote_context() {
+            renderer = renderer.with_context(remote);
+        }
+
+        let path = match bump.package.maybe_pkg() {
+            Some((package_name, package)) => {
+                renderer = renderer.with_context(PackageContext { package_name });
+                &package.changelog_path()
+            }
+            None => crate::settings::changelog_path(),
+        };
+
+        renderer
+            .with_context(context)
+            .render(&bump.release)?
+            .write_to_file(path)?;
+
+        self.repository.add_all()?;
+
+        Ok(())
     }
 
     fn create_bump_commit<P1, P2>(

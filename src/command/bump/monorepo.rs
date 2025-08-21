@@ -1,10 +1,7 @@
 use crate::command::bump::{BumpData, BumpOptions, WithPkg};
 
 use crate::conventional::changelog::release::Release;
-use crate::conventional::changelog::template::{
-    MonoRepoContext, PackageBumpContext, PackageContext,
-};
-use crate::conventional::changelog::ReleaseType;
+use crate::conventional::changelog::template::{MonoRepoContext, PackageBumpContext};
 
 use crate::conventional::version::{Increment, IncrementCommand};
 
@@ -12,7 +9,7 @@ use crate::git::rev::filters::CommitRangeFilter;
 use crate::git::rev::revwalk::RevwalkCache;
 use crate::git::tag::Tag;
 use crate::settings::{HookType, MonoRepoPackage};
-use crate::{settings, CocoGitto, SETTINGS};
+use crate::{CocoGitto, SETTINGS};
 use anyhow::Result;
 
 use log::{info, warn};
@@ -135,21 +132,13 @@ impl CocoGitto {
             })
         }
 
-        if !SETTINGS.disable_changelog {
-            global_bump.release.pretty_print_bump_summary()?;
-
-            let path = settings::changelog_path();
-            let template = SETTINGS.get_monorepo_changelog_template()?;
-
-            global_bump.release.write_to_file(
-                path,
-                template,
-                ReleaseType::MonoRepo(MonoRepoContext {
-                    package_lock: false,
-                    packages: template_context,
-                }),
-            )?;
-        }
+        self.render_changelog(
+            &global_bump,
+            MonoRepoContext {
+                package_lock: false,
+                packages: template_context,
+            },
+        )?;
 
         self.run_hooks(HookType::PreBump, &global_bump, opts.hooks_config)?;
 
@@ -198,21 +187,13 @@ impl CocoGitto {
             })
         }
 
-        if !SETTINGS.disable_changelog {
-            bump.release.pretty_print_bump_summary()?;
-
-            let path = settings::changelog_path();
-            let template = SETTINGS.get_monorepo_changelog_template()?;
-
-            bump.release.write_to_file(
-                path,
-                template,
-                ReleaseType::MonoRepo(MonoRepoContext {
-                    package_lock: true,
-                    packages: template_context,
-                }),
-            )?;
-        }
+        self.render_changelog(
+            &bump,
+            MonoRepoContext {
+                package_lock: true,
+                packages: template_context,
+            },
+        )?;
 
         self.run_hooks(HookType::PreBump, &bump, opts.hooks_config)?;
 
@@ -282,18 +263,8 @@ impl CocoGitto {
         package_bumps: &Vec<BumpData<WithPkg<'_>>>,
     ) -> Result<()> {
         for bump in package_bumps {
-            bump.release.pretty_print_bump_summary()?;
-
-            let path = bump.package.1.changelog_path();
-            let template = SETTINGS.get_package_changelog_template()?;
-
-            let additional_context = ReleaseType::Package(PackageContext {
-                package_name: bump.package.0,
-            });
-
-            bump.release
-                .write_to_file(&path, template, additional_context)?;
-            info!("\tChangelog updated {:?}", path);
+            self.render_changelog(&bump, ())?;
+            info!("\tChangelog updated {:?}", bump.package.1.changelog_path());
 
             self.run_hooks(HookType::PreBump, bump, hooks_config)?;
         }

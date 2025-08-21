@@ -1,10 +1,8 @@
 use crate::command::bump::{BumpOptions, WithPkg};
-use crate::conventional::changelog::template::PackageContext;
-use crate::conventional::changelog::ReleaseType;
 use crate::conventional::version::Increment;
 use crate::git::rev::filters::CommitRangeFilter;
 use crate::settings::HookType;
-use crate::{CocoGitto, SETTINGS};
+use crate::CocoGitto;
 use anyhow::Result;
 use colored::*;
 use log::info;
@@ -29,17 +27,7 @@ impl CocoGitto {
             return Ok(());
         }
 
-        if !SETTINGS.disable_changelog {
-            bump.release.pretty_print_bump_summary()?;
-
-            let path = opts.package.1.changelog_path();
-            let template = SETTINGS.get_package_changelog_template()?;
-            let additional_context = ReleaseType::Package(PackageContext {
-                package_name: opts.package.0,
-            });
-            bump.release
-                .write_to_file(path, template, additional_context)?;
-        }
+        self.render_changelog(&bump, ())?;
 
         self.run_hooks(HookType::PreBump, &bump, opts.hooks_config)?;
 

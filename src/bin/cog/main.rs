@@ -5,7 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use cocogitto::conventional::changelog::template::{RemoteContext, Template};
-use cocogitto::conventional::changelog::ReleaseType;
+use cocogitto::conventional::changelog::Renderer;
 use cocogitto::conventional::commit as conv_commit;
 use cocogitto::conventional::version::{Increment, IncrementCommand};
 
@@ -598,28 +598,35 @@ fn main() -> Result<()> {
         } => {
             let cocogitto = CocoGitto::get()?;
 
-            let context = RemoteContext::try_new(remote, repository, owner)
-                .or_else(|| SETTINGS.get_template_context());
             let template = template.as_ref().or(SETTINGS.changelog.template.as_ref());
             let template = if let Some(template) = template {
-                Template::from_arg(template, context)?
+                Template::new(template)?
             } else {
-                Template::default()
+                Template::DEFAULT
             };
+            let mut renderer = Renderer::new(template)?;
+
+            let remote_context = RemoteContext::try_new(remote, repository, owner)
+                .or_else(|| SETTINGS.get_remote_context());
+            if let Some(context) = remote_context {
+                renderer = renderer.with_context(context);
+            }
 
             // TODO: fallback to tag here
             let pattern = pattern.as_deref().unwrap_or("..");
-            let result = match at {
-                Some(at) => cocogitto.get_changelog_at_tag(&at, template)?,
+            let release = match at {
+                Some(at) => cocogitto.get_changelog(&at, false)?,
                 None => {
                     if !SETTINGS.packages.is_empty() {
-                        cocogitto.get_monorepo_changelog(pattern, template)?
+                        let (release, context) = cocogitto.get_monorepo_changelog(pattern)?;
+                        renderer = renderer.with_context(context);
+                        release
                     } else {
-                        let changelog = cocogitto.get_changelog(pattern, true)?;
-                        changelog.as_markdown(template, ReleaseType::Standard)?
+                        cocogitto.get_changelog(pattern, true)?
                     }
                 }
             };
+            let result = renderer.render(&release)?.0;
             println!("{result}");
         }
         Command::Init { path } => {
