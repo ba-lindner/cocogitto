@@ -29,6 +29,7 @@ impl PackagePathFilter {
     fn new(package_path: &str, include_paths: &[String], exclude_paths: &[String]) -> Self {
         let include = {
             let mut builder = GlobSetBuilder::new();
+            let package_path = package_path.strip_suffix("/").unwrap_or(package_path);
             builder.add(
                 GlobBuilder::new(format!("{package_path}/**").as_str())
                     .literal_separator(true)
