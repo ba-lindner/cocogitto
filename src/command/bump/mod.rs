@@ -271,6 +271,7 @@ impl CocoGitto {
         };
 
         renderer
+            .with_context(&*SETTINGS)
             .with_context(context)
             .render(&bump.release)?
             .write_to_file(path)?;
@@ -320,7 +321,7 @@ impl CocoGitto {
             let mut context = tera::Context::new();
             context.insert("latest", &bump.current.version.to_string());
             context.insert("version", &bump.next.version.to_string());
-            let message = tera::Tera::one_off(&msg_tmpl, &context, false)?;
+            let message = tera::Tera::one_off(msg_tmpl, &context, false)?;
             let sig = self.repository.0.signature()?;
             self.repository.0.tag(&tag, &head, &sig, &message, false)?;
         } else {

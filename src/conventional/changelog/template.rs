@@ -78,7 +78,7 @@ pub struct RemoteContext {
     owner: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct MonoRepoContext<'a> {
     pub package_lock: bool,
     pub packages: Vec<PackageBumpContext<'a>>,
@@ -92,7 +92,7 @@ pub struct PackageBumpContext<'a> {
     pub from: Option<ReleaseVersion>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct PackageContext<'a> {
     pub package_name: &'a str,
 }
@@ -101,26 +101,16 @@ pub trait ToContext {
     fn to_context(&self) -> Context;
 }
 
-impl ToContext for () {
+impl<T: Serialize> ToContext for T {
+    fn to_context(&self) -> Context {
+        Context::from_serialize(self).expect("failed to serialize")
+    }
+}
+
+pub struct Empty;
+impl ToContext for Empty {
     fn to_context(&self) -> Context {
         Context::new()
-    }
-}
-
-impl ToContext for MonoRepoContext<'_> {
-    fn to_context(&self) -> Context {
-        let mut context = tera::Context::new();
-        context.insert("package_lock", &self.package_lock);
-        context.insert("packages", &self.packages);
-        context
-    }
-}
-
-impl ToContext for PackageContext<'_> {
-    fn to_context(&self) -> Context {
-        let mut context = tera::Context::new();
-        context.insert("package_name", &self.package_name);
-        context
     }
 }
 

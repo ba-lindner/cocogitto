@@ -1,7 +1,7 @@
 use crate::command::bump::{BumpData, BumpOptions, WithPkg};
 
 use crate::conventional::changelog::release::Release;
-use crate::conventional::changelog::template::{MonoRepoContext, PackageBumpContext};
+use crate::conventional::changelog::template::{Empty, MonoRepoContext, PackageBumpContext};
 
 use crate::conventional::version::{Increment, IncrementCommand};
 
@@ -69,7 +69,7 @@ impl CocoGitto {
 
         if SETTINGS.generate_mono_repository_package_tags {
             for bump in &bumps {
-                self.create_bump_tag(&bump, &opts)?;
+                self.create_bump_tag(bump, &opts)?;
             }
         }
 
@@ -148,7 +148,7 @@ impl CocoGitto {
 
         if SETTINGS.generate_mono_repository_package_tags {
             for bump in &bumps {
-                self.create_bump_tag(&bump, &opts)?;
+                self.create_bump_tag(bump, &opts)?;
             }
         }
 
@@ -263,7 +263,7 @@ impl CocoGitto {
         package_bumps: &Vec<BumpData<WithPkg<'_>>>,
     ) -> Result<()> {
         for bump in package_bumps {
-            self.render_changelog(&bump, ())?;
+            self.render_changelog(bump, Empty)?;
             info!("\tChangelog updated {:?}", bump.package.1.changelog_path());
 
             self.run_hooks(HookType::PreBump, bump, hooks_config)?;

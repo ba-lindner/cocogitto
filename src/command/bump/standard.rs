@@ -1,5 +1,6 @@
 use crate::command::bump::BumpOptions;
 
+use crate::conventional::changelog::template::Empty;
 use crate::conventional::version::Increment;
 use crate::git::rev::filters::CommitRangeFilter;
 use crate::settings::HookType;
@@ -23,7 +24,7 @@ impl CocoGitto {
             return Ok(());
         }
 
-        self.render_changelog(&bump, ())?;
+        self.render_changelog(&bump, Empty)?;
 
         self.run_hooks(HookType::PreBump, &bump, opts.hooks_config)?;
 
