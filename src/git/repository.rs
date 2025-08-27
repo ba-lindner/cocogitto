@@ -7,7 +7,7 @@ use std::{
 
 use crate::git::error::Git2Error;
 use crate::git::rev::cache::RepoCache;
-use git2::{Commit as Git2Commit, IndexAddOption, Oid, Repository as Git2Repository};
+use git2::{Commit as Git2Commit, IndexAddOption, Repository as Git2Repository};
 
 pub(crate) struct Repository(pub(crate) Git2Repository, pub(crate) OnceCell<RepoCache>);
 
@@ -101,25 +101,12 @@ impl Repository {
         index.write().map_err(Git2Error::GitAddError)
     }
 
-    pub(crate) fn get_head_commit_oid(&self) -> Result<Oid, Git2Error> {
-        self.get_head_commit().map(|commit| commit.id())
-    }
-
     pub(crate) fn get_head_commit(&self) -> Result<Git2Commit<'_>, Git2Error> {
         let head_ref = self.0.head();
         match head_ref {
             Ok(head) => head.peel_to_commit().map_err(Git2Error::PeelToCommitError),
             Err(err) => Err(Git2Error::UnableToGetHead(err)),
         }
-    }
-
-    pub(crate) fn get_first_commit(&self) -> Result<Oid, Git2Error> {
-        let mut revwalk = self.0.revwalk()?;
-        revwalk.push_head()?;
-        revwalk
-            .last()
-            .expect("No revision found")
-            .map_err(Git2Error::CommitNotFound)
     }
 
     pub(crate) fn get_branch_shorthand(&self) -> Option<String> {
@@ -197,10 +184,10 @@ mod test {
         let commit_oid = repo.commit("first commit", false, false)?;
 
         // Act
-        let oid = repo.get_head_commit_oid();
+        let oid = repo.get_cache().head;
 
         // Assert
-        assert_that!(oid).is_ok().is_equal_to(commit_oid);
+        assert_that!(oid).is_equal_to(commit_oid);
         Ok(())
     }
 
@@ -210,7 +197,7 @@ mod test {
         let repo = git_init_no_gpg()?;
 
         // Act
-        let oid = repo.get_head_commit_oid();
+        let oid = repo.get_head_commit();
 
         // Assert
         assert_that!(oid).is_err();

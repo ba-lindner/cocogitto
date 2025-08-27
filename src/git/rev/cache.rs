@@ -9,8 +9,6 @@ use std::fmt::Display;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitInfo {
-    pub is_head: bool,
-    pub is_first: bool,
     pub oid: Oid,
     pub tags: Vec<Tag>,
 }
@@ -21,8 +19,6 @@ impl Display for CommitInfo {
             tag.fmt(f)
         } else if let Some(tag) = self.tags.first() {
             tag.fmt(f)
-        } else if self.is_head {
-            f.write_str("HEAD")
         } else {
             self.oid.fmt(f)
         }
@@ -32,8 +28,6 @@ impl Display for CommitInfo {
 impl CommitInfo {
     pub fn new(oid: Oid) -> CommitInfo {
         Self {
-            is_head: false,
-            is_first: false,
             oid,
             tags: Vec::new(),
         }
@@ -41,8 +35,6 @@ impl CommitInfo {
 
     pub fn from_tag(tag: &Tag) -> Self {
         Self {
-            is_first: false,
-            is_head: false,
             oid: tag.oid.unwrap_or(Oid::zero()),
             tags: vec![tag.clone()],
         }
@@ -72,18 +64,25 @@ impl RepoCache {
     fn build(repo: &Repository) -> Result<Self, Git2Error> {
         let mut res = Self::empty();
 
-        res.head = repo.get_head_commit_oid()?;
-        res.insert_oid(res.head).is_head = true;
+        res.head = repo.get_head_commit()?.id();
+        res.insert_oid(res.head);
 
-        res.first = repo.get_first_commit()?;
-        res.insert_oid(res.first).is_first = true;
+        res.first = {
+            let mut revwalk = repo.0.revwalk()?;
+            revwalk.push_head()?;
+            revwalk
+                .last()
+                .expect("No revision found")
+                .map_err(Git2Error::CommitNotFound)?
+        };
+        res.insert_oid(res.first);
 
         let tags = repo.0.tag_names(None)?;
-        let tags = tags
-            .into_iter()
-            .flatten()
-            .filter_map(|tag| repo.resolve_tag(tag));
-        for (name, oid, tag) in tags {
+        let tags = tags.into_iter().flatten();
+        for name in tags {
+            let Some((oid, tag)) = repo.resolve_tag(name, res.head) else {
+                continue;
+            };
             res.insert_oid(oid).tags.push(tag.clone());
             res.tags.push(tag);
             res.refs.insert(name.to_string(), oid);
@@ -134,7 +133,7 @@ impl Repository {
             .ok_or(Git2Error::UnknownRevision(spec.to_string()))
     }
 
-    fn resolve_tag<'t>(&'_ self, tag: &'t str) -> Option<(&'t str, Oid, Tag)> {
+    fn resolve_tag(&self, tag: &str, head: Oid) -> Option<(Oid, Tag)> {
         let full_name = format!("refs/tags/{tag}");
         let oid = self
             .0
@@ -145,13 +144,12 @@ impl Repository {
             .id();
 
         // check if tag is reachable from HEAD
-        let head = self.get_head_commit_oid().ok()?;
         if head != oid && !self.0.graph_descendant_of(head, oid).ok()? {
             return None;
         }
 
         let res = Tag::from_str(tag, Some(oid)).ok()?;
-        Some((tag, oid, res))
+        Some((oid, res))
     }
 }
 
@@ -179,9 +177,10 @@ mod test {
             git commit --allow-empty -m "first commit";
             git tag -a 1.0.0 -m "annotated tag";
         )?;
+        let head = repo.get_cache().head;
 
         // Act
-        let tag = repo.resolve_tag("1.0.0");
+        let tag = repo.resolve_tag("1.0.0", head);
 
         // Assert
         assert_that!(tag).is_some();
@@ -196,9 +195,10 @@ mod test {
             git commit --allow-empty -m "first commit";
             git tag 1.0.0;
         )?;
+        let head = repo.get_cache().head;
 
         // Act
-        let tag = repo.resolve_tag("1.0.0");
+        let tag = repo.resolve_tag("1.0.0", head);
 
         // Assert
         assert_that!(tag).is_some();
@@ -213,9 +213,10 @@ mod test {
             git commit --allow-empty -m "first commit";
             git tag the_tag;
         )?;
+        let head = repo.get_cache().head;
 
         // Act
-        let tag = repo.resolve_tag("the_taaaag");
+        let tag = repo.resolve_tag("the_taaaag", head);
 
         // Assert
         assert_that!(tag).is_none();
@@ -232,9 +233,10 @@ mod test {
             git tag 1.0.0;
             git reset HEAD^
         )?;
+        let head = repo.get_cache().head;
 
         // Act
-        let tag = repo.resolve_tag("1.0.0");
+        let tag = repo.resolve_tag("1.0.0", head);
 
         // Assert
         assert_that!(tag).is_none();

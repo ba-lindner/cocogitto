@@ -197,8 +197,6 @@ mod test {
 
         // Assert
         assert_that!(commit_range.from()).is_equal_to(CommitInfo {
-            is_first: true,
-            is_head: false,
             oid: Oid::from_str(&first)?,
             tags: Vec::new(),
         });
@@ -420,19 +418,8 @@ mod test {
     fn from_tag_to_head() -> Result<()> {
         // Arrange
         let repo = Repository::open(COCOGITTO_REPOSITORY)?;
-        let head = repo.get_head_commit_oid()?;
-        let mut head = CommitInfo {
-            is_first: false,
-            is_head: true,
-            oid: head,
-            tags: Vec::new(),
-        };
-        let tag = repo.get_latest_tag(None, false).ok_or(TagError::NoTag)?;
-
-        // Cover the case when we release a version and run the test in the CI right after that
-        if tag.oid == Some(head.oid) {
-            head.tags.push(tag);
-        };
+        let head = repo.get_cache().head;
+        let head_info = repo.get_cache().get_info(head);
 
         // Act
         let range = repo.revwalk_pattern("1.0.0..")?;
@@ -440,7 +427,7 @@ mod test {
         // Assert
         assert_that!(range.from().oid)
             .is_equal_to(&Oid::from_str("7c4a1cb692b445f36a44857ce17db32b91acd24c")?);
-        assert_that!(range.to()).is_equal_to(head);
+        assert_that!(range.to()).is_equal_to(head_info);
 
         Ok(())
     }
@@ -468,7 +455,7 @@ mod test {
         // Arrange
         let repo = Repository::open(COCOGITTO_REPOSITORY)?;
         let mut tag_count = repo.0.tag_names(None)?.len();
-        let head = repo.get_head_commit_oid()?;
+        let head = repo.get_cache().head;
         let latest = repo.get_latest_tag(None, false).ok_or(TagError::NoTag)?;
         if latest.oid == Some(head) {
             tag_count -= 1;
