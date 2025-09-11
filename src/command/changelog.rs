@@ -12,12 +12,15 @@ impl CocoGitto {
     /// ## Get a changelog between two oids
     /// - `from` default value:latest tag or else first commit
     /// - `to` default value:`HEAD` or else first commit
-    pub fn get_changelog(&self, pattern: &str, _with_child_releases: bool) -> Result<Release> {
+    pub fn get_changelog(&self, pattern: &str, _with_child_releases: bool) -> Result<Vec<Release>> {
         let commit_range = self.repository.revwalk_pattern(pattern)?;
-        Release::build(commit_range, CommitRangeFilter::None).map_err(Into::into)
+        Ok(Release::build(commit_range, CommitRangeFilter::None))
     }
 
-    pub fn get_monorepo_changelog(&self, pattern: &str) -> Result<(Release, MonoRepoContext<'_>)> {
+    pub fn get_monorepo_changelog(
+        &self,
+        pattern: &str,
+    ) -> Result<(Vec<Release>, MonoRepoContext<'_>)> {
         let mut packages = Vec::new();
 
         let spec = RevSpec::parse(pattern, &self.repository)?;
@@ -69,6 +72,6 @@ impl CocoGitto {
         };
 
         let range = range.global()?;
-        Ok((Release::build(range, CommitRangeFilter::Global)?, context))
+        Ok((Release::build(range, CommitRangeFilter::Global), context))
     }
 }

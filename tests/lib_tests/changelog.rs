@@ -40,22 +40,22 @@ fn getting_changelog_from_tags_should_produce_the_same_range_either_from_tags_or
     let changelog_tag_range = cocogitto.get_changelog("0.1.0..0.2.0", false)?;
     let at_tag = cocogitto.get_changelog("..0.2.0", false)?;
 
-    let commit_range_oids: Vec<String> = changelog_from_commit_range
+    let commit_range_oids: Vec<_> = changelog_from_commit_range[0]
         .commits
-        .into_iter()
-        .map(|commit| commit.commit.conventional.summary)
+        .iter()
+        .map(|commit| &commit.commit.conventional.summary)
         .collect();
 
-    let tag_range_oids: Vec<String> = changelog_tag_range
+    let tag_range_oids: Vec<_> = changelog_tag_range[0]
         .commits
-        .into_iter()
-        .map(|commit| commit.commit.conventional.summary)
+        .iter()
+        .map(|commit| &commit.commit.conventional.summary)
         .collect();
 
-    let at_tag_oids: Vec<String> = at_tag
+    let at_tag_oids: Vec<_> = at_tag[0]
         .commits
-        .into_iter()
-        .map(|commit| commit.commit.conventional.summary)
+        .iter()
+        .map(|commit| &commit.commit.conventional.summary)
         .collect();
 
     // Assert
@@ -94,16 +94,16 @@ fn from_commit_should_be_drained() -> Result<()> {
     let changelog_from_commit_range =
         cocogitto.get_changelog(&format!("{unttaged_sha}..{head}"), true)?;
 
-    let commit_range_oids: Vec<String> = changelog_from_commit_range
+    let commit_range_oids: Vec<_> = changelog_from_commit_range[0]
         .commits
-        .into_iter()
-        .map(|commit| commit.commit.oid)
+        .iter()
+        .map(|commit| &commit.commit.oid)
         .collect();
 
     // Assert
     asserting!("Changelog commits generated from a commit range should be equivalent to when generated from the same tag range")
         .that(&commit_range_oids)
-        .is_equal_to(vec![head]);
+        .is_equal_to(vec![&head]);
 
     Ok(())
 }

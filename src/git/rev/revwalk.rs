@@ -95,20 +95,21 @@ mod test {
         let range = repo.revwalk_pattern("0.1.0")?;
 
         // Act
-        let release = Release::build(range, CommitRangeFilter::None)?;
+        let releases = Release::build(range, CommitRangeFilter::None);
+        let release = &releases[0];
 
         // Assert
-        assert_that!(release.previous).is_none();
+        assert_that!(releases.len()).is_equal_to(1);
         assert_that!(release.version.id).is_equal_to(&Oid::from_str(&three)?);
         assert_that!(release.from).is_equal_to(&Oid::from_str(&one)?.into());
 
-        let expected_commits: Vec<String> = release
+        let expected_commits: Vec<_> = release
             .commits
-            .into_iter()
-            .map(|commit| commit.commit.oid)
+            .iter()
+            .map(|commit| &commit.commit.oid)
             .collect();
 
-        assert_that!(expected_commits).is_equal_to(vec![three, two, one]);
+        assert_that!(expected_commits).is_equal_to(vec![&three, &two, &one]);
 
         Ok(())
     }
@@ -128,32 +129,25 @@ mod test {
         let range = repo.revwalk_pattern("..0.2.0")?;
 
         // Act
-        let release = Release::build(range, CommitRangeFilter::None)?;
+        let releases = Release::build(range, CommitRangeFilter::None);
 
         // Assert
-        assert_that!(release.previous).is_some().matches(|_child| {
-            let commits: Vec<String> = release
-                .previous
-                .as_ref()
-                .unwrap()
-                .commits
-                .iter()
-                .map(|commit| commit.commit.oid.clone())
-                .collect();
+        assert_that!(releases.get(1)).is_some().matches(|v1| {
+            let commits: Vec<_> = v1.commits.iter().map(|commit| &commit.commit.oid).collect();
 
-            commits == [three.clone(), two.clone(), one.clone()]
+            commits == [&three, &two, &one]
         });
 
-        assert_that!(release.version.to_string()).is_equal_to("0.2.0".to_string());
-        assert_that!(release.from.to_string()).is_equal_to("0.1.0".to_string());
+        assert_that!(releases[0].version.to_string()).is_equal_to("0.2.0".to_string());
+        assert_that!(releases[0].from.to_string()).is_equal_to("0.1.0".to_string());
 
-        let expected_commits: Vec<String> = release
+        let expected_commits: Vec<_> = releases[0]
             .commits
-            .into_iter()
-            .map(|commit| commit.commit.oid)
+            .iter()
+            .map(|commit| &commit.commit.oid)
             .collect();
 
-        assert_that!(expected_commits).is_equal_to(vec![five, four]);
+        assert_that!(expected_commits).is_equal_to(vec![&five, &four]);
 
         Ok(())
     }
@@ -165,15 +159,14 @@ mod test {
         let range = repo.revwalk_pattern("0.32.1..0.32.3")?;
 
         // Act
-        let release = Release::build(range, CommitRangeFilter::None)?;
+        let releases = Release::build(range, CommitRangeFilter::None);
 
         // Assert
-        assert_that!(release.version.to_string()).is_equal_to("0.32.3".to_string());
+        assert_that!(releases[0].version.to_string()).is_equal_to("0.32.3".to_string());
 
-        let release = *release.previous.unwrap();
-        assert_that!(release.version.to_string()).is_equal_to("0.32.2".to_string());
+        assert_that!(releases[1].version.to_string()).is_equal_to("0.32.2".to_string());
 
-        assert_that!(release.previous).is_none();
+        assert_that!(releases).has_length(2);
         Ok(())
     }
 
@@ -457,23 +450,17 @@ mod test {
         let mut tag_count = repo.0.tag_names(None)?.len();
         let head = repo.get_cache().head;
         let latest = repo.get_latest_tag(None, false).ok_or(TagError::NoTag)?;
-        if latest.oid == Some(head) {
-            tag_count -= 1;
+        if latest.oid != Some(head) {
+            tag_count += 1;
         };
 
         let range = repo.revwalk_pattern("..")?;
 
         // Act
-        let mut release = Release::build(range, CommitRangeFilter::None)?;
-        let mut count = 0;
-
-        while let Some(previous) = release.previous {
-            release = *previous;
-            count += 1;
-        }
+        let releases = Release::build(range, CommitRangeFilter::None);
 
         // Assert
-        assert_that!(count).is_equal_to(tag_count);
+        assert_that!(releases).has_length(tag_count);
 
         Ok(())
     }
@@ -493,16 +480,16 @@ mod test {
         let range = repo.revwalk_pattern(&format!("{}..", &one[0..7]))?;
 
         // Act
-        let release = Release::build(range, CommitRangeFilter::None)?;
+        let release = Release::build(range, CommitRangeFilter::None);
 
         // Assert
-        let actual_oids: Vec<String> = release
+        let actual_oids: Vec<_> = release[0]
             .commits
             .iter()
-            .map(|commit| commit.commit.oid.to_string())
+            .map(|commit| &commit.commit.oid)
             .collect();
 
-        assert_that!(actual_oids).is_equal_to(vec![four, three, two]);
+        assert_that!(actual_oids).is_equal_to(vec![&four, &three, &two]);
 
         Ok(())
     }
@@ -524,25 +511,23 @@ mod test {
         let range = repo.revwalk_pattern(&format!("{}..", &from[0..7]))?;
 
         // Act
-        let release = Release::build(range, CommitRangeFilter::None)?;
+        let releases = Release::build(range, CommitRangeFilter::None);
 
         // Assert
-        let head_to_v1: Vec<String> = release
+        let head_to_v1: Vec<_> = releases[0]
             .commits
             .iter()
-            .map(|commit| commit.commit.oid.to_string())
+            .map(|commit| &commit.commit.oid)
             .collect();
 
-        let commit_before_v1: Vec<String> = release
-            .previous
-            .unwrap()
+        let commit_before_v1: Vec<_> = releases[1]
             .commits
             .iter()
-            .map(|commit| commit.commit.oid.to_string())
+            .map(|commit| &commit.commit.oid)
             .collect();
 
-        assert_that!(head_to_v1).is_equal_to(vec![three]);
-        assert_that!(commit_before_v1).is_equal_to(vec![two, one]);
+        assert_that!(head_to_v1).is_equal_to(vec![&three]);
+        assert_that!(commit_before_v1).is_equal_to(vec![&two, &one]);
 
         Ok(())
     }

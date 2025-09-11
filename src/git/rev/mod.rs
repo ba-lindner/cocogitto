@@ -63,6 +63,18 @@ impl<'repo> CommitRange<'repo> {
             .unwrap_or(CommitInfo::new(Oid::zero()))
     }
 
+    pub fn prev(&self) -> Option<CommitInfo> {
+        self.commits
+            .last()
+            .and_then(|commit| commit.parent(0).ok())
+            .map(|commit| {
+                self.repository
+                    .get_cache()
+                    .get_info(commit.id())
+                    .into_owned()
+            })
+    }
+
     pub fn split_at_tags(&self, filter: CommitRangeFilter<'_>) -> Vec<CommitRange<'repo>> {
         let mut ranges = Vec::new();
         let mut current = Vec::new();

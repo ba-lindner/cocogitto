@@ -40,21 +40,22 @@ impl Renderer {
         self
     }
 
-    pub fn render(&self, version: &Release) -> Result<RenderOutput, tera::Error> {
-        let mut release = self.render_release(version)?;
-        let mut version = version;
-        while let Some(previous) = version.previous.as_ref() {
-            release.push_str("\n- - -\n\n");
-            release.push_str(self.render_release(previous)?.as_str());
-            version = previous;
-        }
+    pub fn render(&self, releases: &[Release]) -> Result<RenderOutput, tera::Error> {
+        let rendered = releases
+            .iter()
+            .map(|release| self.render_release(release))
+            .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(RenderOutput(release))
+        Ok(RenderOutput(rendered.join("\n- - -\n\n")))
     }
 
-    fn render_release(&self, version: &Release) -> Result<String, tera::Error> {
+    pub fn render_single(&self, release: &Release) -> Result<RenderOutput, tera::Error> {
+        self.render_release(release).map(RenderOutput)
+    }
+
+    fn render_release(&self, release: &Release) -> Result<String, tera::Error> {
         let mut context = self.context.clone();
-        let release_context = Context::from_serialize(version)?;
+        let release_context = Context::from_serialize(release)?;
         context.extend(release_context);
 
         self.tera.render(self.name, &context)

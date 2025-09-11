@@ -5,6 +5,7 @@ use conventional_commit_parser::commit::Footer;
 use git2::Oid;
 use serde::{Serialize, Serializer};
 
+use crate::conventional::changelog::template::PackageBumpContext;
 use crate::conventional::commit::Commit;
 use crate::git::rev::cache::CommitInfo;
 use crate::git::rev::filters::CommitRangeFilter;
@@ -13,7 +14,6 @@ use crate::git::tag::Tag;
 use crate::settings;
 use colored::Colorize;
 
-use crate::conventional::changelog::error::ChangelogError;
 use log::warn;
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
@@ -80,7 +80,7 @@ pub struct Release {
     pub from: ReleaseVersion,
     pub date: NaiveDateTime,
     pub commits: Vec<ChangelogCommit>,
-    pub previous: Option<Box<Release>>,
+    pub package_bumps: Vec<PackageBumpContext<'static>>,
 }
 
 impl Release {
@@ -90,32 +90,25 @@ impl Release {
             from: ReleaseVersion::empty(),
             date: Utc::now().naive_local(),
             commits: Vec::new(),
-            previous: None,
+            package_bumps: Vec::new(),
         }
     }
 
-    pub fn build(
-        range: CommitRange<'_>,
-        filter: CommitRangeFilter<'_>,
-    ) -> Result<Self, ChangelogError> {
+    pub fn build(range: CommitRange<'_>, filter: CommitRangeFilter<'_>) -> Vec<Self> {
         range
             .split_at_tags(filter)
             .into_iter()
-            .rev()
             .map(|range| Self::build_single(range, filter))
-            .fold(None, |prev, mut curr| {
-                if let Some(previous) = prev {
-                    curr.set_previous(previous);
-                }
-                Some(curr)
-            })
-            .ok_or(ChangelogError::EmptyRelease)
+            .collect()
     }
 
     pub fn build_single(range: CommitRange<'_>, filter: CommitRangeFilter<'_>) -> Self {
         Self {
             version: range.to().into_release_version(filter),
-            from: range.from().into_release_version(filter),
+            from: range
+                .prev()
+                .unwrap_or(range.from())
+                .into_release_version(filter),
             date: Utc::now().naive_local(),
             commits: range
                 .into_iter()
@@ -127,13 +120,8 @@ impl Release {
                 .filter(|commit| !commit.should_omit())
                 .map(ChangelogCommit::from)
                 .collect(),
-            previous: None,
+            package_bumps: Vec::new(),
         }
-    }
-
-    fn set_previous(&mut self, previous: Release) {
-        self.from = previous.version.clone();
-        self.previous = Some(Box::new(previous));
     }
 }
 
@@ -195,9 +183,8 @@ mod test {
         let repo = Repository::open(".")?;
         let iter = repo.revwalk_pattern("..")?;
         let release = Release::build(iter, CommitRangeFilter::None);
-        assert_that!(release)
-            .is_ok()
-            .matches(|r| !r.commits.is_empty());
+        assert_that!(release).is_not_empty();
+        assert_that!(release[0].commits).is_not_empty();
         Ok(())
     }
 
@@ -208,7 +195,7 @@ mod test {
         let renderer = Renderer::default();
 
         // Act
-        let changelog = renderer.render(&release)?;
+        let changelog = renderer.render_single(&release)?;
 
         // Assert
         assert_eq!(
@@ -234,7 +221,7 @@ mod test {
         let renderer = Renderer::new(Template::FULL_HASH)?;
 
         // Act
-        let changelog = renderer.render(&release)?;
+        let changelog = renderer.render_single(&release)?;
 
         // Assert
         assert_eq!(
@@ -260,7 +247,7 @@ mod test {
         let renderer = Renderer::new(Template::REMOTE)?.with_context(RemoteContext::fixture());
 
         // Act
-        let changelog = renderer.render(&release)?;
+        let changelog = renderer.render_single(&release)?;
 
         // Assert
         assert_eq!(
@@ -288,7 +275,7 @@ mod test {
         let renderer = monorepo_renderer(renderer)?;
 
         // Act
-        let changelog = renderer.render(&release)?;
+        let changelog = renderer.render_single(&release)?;
 
         // Assert
         assert_eq!(
@@ -320,7 +307,7 @@ mod test {
         let renderer = monorepo_manual_bump_rendered(renderer)?;
 
         // Act
-        let changelog = renderer.render(&release)?;
+        let changelog = renderer.render_single(&release)?;
 
         // Assert
         assert_eq!(
@@ -352,7 +339,7 @@ mod test {
         let renderer = monorepo_renderer(renderer)?;
 
         // Act
-        let changelog = renderer.render(&release)?;
+        let changelog = renderer.render_single(&release)?;
 
         // Assert
         assert_eq!(
@@ -384,7 +371,7 @@ mod test {
         let renderer = monorepo_manual_bump_rendered(renderer)?;
 
         // Act
-        let changelog = renderer.render(&release)?;
+        let changelog = renderer.render_single(&release)?;
 
         // Assert
         assert_eq!(
@@ -417,7 +404,7 @@ mod test {
         let renderer = monorepo_renderer(renderer)?;
 
         // Act
-        let changelog = renderer.render(&release)?;
+        let changelog = renderer.render_single(&release)?;
 
         // Assert
         assert_eq!(
@@ -449,7 +436,7 @@ mod test {
         let renderer = package_renderer(renderer)?;
 
         // Act
-        let changelog = renderer.render(&release)?;
+        let changelog = renderer.render_single(&release)?;
 
         // Assert
         assert_eq!(
@@ -477,7 +464,7 @@ mod test {
         let renderer = package_renderer(renderer)?;
 
         // Act
-        let changelog = renderer.render(&release)?;
+        let changelog = renderer.render_single(&release)?;
 
         // Assert
         assert_eq!(
@@ -506,7 +493,7 @@ mod test {
         let renderer = package_renderer(renderer)?;
 
         // Act
-        let changelog = renderer.render(&release)?;
+        let changelog = renderer.render_single(&release)?;
 
         // Assert
         assert_eq!(
@@ -535,7 +522,7 @@ mod test {
         let renderer = monorepo_manual_bump_rendered(renderer)?;
 
         // Act
-        let changelog = renderer.render(&release)?;
+        let changelog = renderer.render_single(&release)?;
 
         // Assert
         assert_eq!(
@@ -736,7 +723,7 @@ mod test {
                         },
                     },
                 ],
-                previous: None,
+                package_bumps: Vec::new(),
             }
         }
     }

@@ -273,7 +273,7 @@ impl CocoGitto {
         renderer
             .with_context(&*SETTINGS)
             .with_context(context)
-            .render(&bump.release)?
+            .render_single(&bump.release)?
             .write_to_file(path)?;
 
         self.repository.add_all()?;
