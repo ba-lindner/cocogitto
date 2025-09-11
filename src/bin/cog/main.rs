@@ -252,6 +252,10 @@ enum Command {
         /// Specify which package to get the version for in a monorepo.
         #[arg(long, value_parser = packages())]
         package: Option<String>,
+
+        /// Include prerelease versions
+        #[arg(short, long)]
+        include_pre_release: bool,
     },
 
     /// Commit changelog from latest tag to HEAD and create new tag
@@ -418,9 +422,13 @@ fn main() -> Result<()> {
     init_logs(cli.verbose, cli.quiet);
 
     match cli.command {
-        Command::GetVersion { fallback, package } => {
+        Command::GetVersion {
+            fallback,
+            package,
+            include_pre_release,
+        } => {
             let cocogitto = CocoGitto::get()?;
-            cocogitto.get_latest_version(fallback, package)?
+            cocogitto.get_latest_version(fallback, package, include_pre_release)?
         }
         Command::Bump {
             version,
