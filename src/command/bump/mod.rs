@@ -13,7 +13,7 @@ use crate::git::tag::Tag;
 use crate::hook::{Hook, Hooks};
 use crate::settings::{HookType, MonoRepoPackage, Settings};
 use crate::BumpHookError;
-use crate::{CocoGitto, COMMITS_METADATA, SETTINGS};
+use crate::{CocoGitto, SETTINGS};
 use anyhow::Result;
 use anyhow::{bail, ensure, Context};
 use colored::Colorize;
@@ -430,27 +430,12 @@ impl Release {
 
         // Commits which type are neither feat, fix nor breaking changes
         // won't affect the version number.
-        let mut non_bump_commits: Vec<&CommitType> = conventional_commits
+        let non_bump_commits: Vec<_> = conventional_commits
             .iter()
-            .filter_map(|commit: &&Commit| {
-                let commit_config = COMMITS_METADATA.get(&commit.conventional.commit_type);
-                match commit_config {
-                    Some(commit_config)
-                        if commit_config.bump_minor() || commit_config.bump_patch() =>
-                    {
-                        None
-                    }
-                    _ if commit.conventional.is_breaking_change => None,
-                    _ => Some(&commit.conventional.commit_type),
-                }
-            })
-            .collect();
-
-        non_bump_commits.sort();
-
-        let non_bump_commits: Vec<(usize, &CommitType)> = non_bump_commits
-            .into_iter()
-            .dedup_by_with_count(|c1, c2| c1 == c2)
+            .filter(|commit| commit.increment(false) == Increment::NoBump)
+            .map(|commit| &commit.conventional.commit_type)
+            .sorted()
+            .dedup_with_count()
             .collect();
 
         if !non_bump_commits.is_empty() {
@@ -462,14 +447,9 @@ impl Release {
             info!("{}", skip_message);
         }
 
-        let bump_commits =
-            conventional_commits
-                .iter()
-                .filter(|commit| match &commit.conventional.commit_type {
-                    CommitType::Feature | CommitType::BugFix => true,
-                    _commit_type if commit.conventional.is_breaking_change => true,
-                    _ => false,
-                });
+        let bump_commits = conventional_commits
+            .iter()
+            .filter(|commit| commit.increment(false) != Increment::NoBump);
 
         for commit in bump_commits {
             match &commit.conventional.commit_type {
