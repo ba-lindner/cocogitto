@@ -86,48 +86,46 @@ impl Default for Tag {
 
 impl Tag {
     pub fn from_str(raw: &str, oid: Option<Oid>) -> Result<Tag, TagError> {
-        let prefix = SETTINGS.tag_prefix.as_ref();
+        let mut to_parse = raw;
 
-        let package_tag: Option<Tag> = SETTINGS
-            .packages
-            .keys()
-            .filter_map(|package_name| {
-                raw.strip_prefix(package_name)
-                    .zip(SETTINGS.monorepo_separator())
-                    .and_then(|(remains, prefix)| remains.strip_prefix(prefix))
-                    .map(|remains| {
-                        SETTINGS
-                            .tag_prefix
-                            .as_ref()
-                            .and_then(|prefix| remains.strip_prefix(prefix))
-                            .unwrap_or(remains)
-                    })
-                    .and_then(|version| Version::parse(version).ok())
-                    .map(|version| Tag {
-                        package: Some(package_name.to_string()),
-                        prefix: SETTINGS.tag_prefix.clone(),
-                        version,
-                        oid,
-                    })
-            })
-            .next();
-
-        if let Some(tag) = package_tag {
-            Ok(tag)
-        } else {
-            let version = prefix
-                .and_then(|prefix| raw.strip_prefix(prefix))
-                .unwrap_or(raw);
-
-            let version = Version::parse(version).map_err(|err| TagError::semver(raw, err))?;
-
-            Ok(Tag {
-                package: None,
-                prefix: prefix.cloned(),
-                version,
-                oid,
-            })
+        let mut tag_package = None;
+        for package in SETTINGS.packages.keys() {
+            if let Some(remaining) = raw
+                .strip_prefix(package)
+                .and_then(|stripped| stripped.strip_prefix(SETTINGS.monorepo_separator()?))
+            {
+                to_parse = remaining;
+                tag_package = Some(package);
+                break;
+            }
         }
+
+        let mut tag_prefix = None;
+        if let Some(prefix) = &SETTINGS.tag_prefix {
+            if let Some(remaining) = to_parse.strip_prefix(prefix) {
+                tag_prefix = Some(prefix);
+                to_parse = remaining;
+            }
+            // strict parsing:
+            // if tags without prefix should be skipped,
+            // add the following code:
+            /*
+            else {
+                return Err(TagError::InvalidPrefixError {
+                    prefix: prefix.clone(),
+                    tag: raw.clone(),
+                })
+            }
+            */
+        }
+
+        let version = Version::parse(to_parse).map_err(|err| TagError::semver(raw, err))?;
+        Ok(Tag {
+            package: tag_package.cloned(),
+            prefix: tag_prefix.cloned(),
+            version,
+            oid,
+        })
     }
 
     pub(crate) fn is_zero(&self) -> bool {
@@ -256,7 +254,7 @@ mod test {
             .iter()
             .max())
         .is_some()
-        .is_equal_to(&Tag::from_str("2.1.0", None)?);
+        .is_equal_to(&Tag::from_str("v2.1.0", None)?);
 
         Ok(())
     }
