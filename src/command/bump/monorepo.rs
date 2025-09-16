@@ -65,7 +65,7 @@ impl CocoGitto {
 
         self.bump_packages(opts.hooks_config, &bumps)?;
 
-        self.create_bump_commit(&empty_bump, &opts)?;
+        self.create_bump_commit(&opts, "bump packages")?;
 
         if SETTINGS.generate_mono_repository_package_tags {
             for bump in &bumps {
@@ -144,7 +144,7 @@ impl CocoGitto {
 
         self.bump_packages(opts.hooks_config, &bumps)?;
 
-        self.create_bump_commit(&global_bump, &opts)?;
+        self.create_bump_commit(&opts, &global_bump.next)?;
 
         if SETTINGS.generate_mono_repository_package_tags {
             for bump in &bumps {
@@ -197,7 +197,7 @@ impl CocoGitto {
 
         self.run_hooks(HookType::PreBump, &bump, opts.hooks_config)?;
 
-        self.create_bump_commit(&bump, &opts)?;
+        self.create_bump_commit(&opts, &bump.next)?;
 
         self.create_bump_tag(&bump, &opts)?;
 

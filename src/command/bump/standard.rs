@@ -28,7 +28,7 @@ impl CocoGitto {
 
         self.run_hooks(HookType::PreBump, &bump, opts.hooks_config)?;
 
-        self.create_bump_commit(&bump, &opts)?;
+        self.create_bump_commit(&opts, &bump.next)?;
         self.create_bump_tag(&bump, &opts)?;
 
         self.run_hooks(HookType::PostBump, &bump, opts.hooks_config)?;

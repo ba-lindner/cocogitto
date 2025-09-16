@@ -5,7 +5,6 @@ use crate::conventional::changelog::Renderer;
 use crate::conventional::commit::Commit;
 
 use crate::conventional::version::{Increment, IncrementCommand};
-use crate::git::error::Git2Error;
 use crate::git::rev::filters::CommitRangeFilter;
 use crate::git::rev::revspec::RevSpec;
 use crate::git::rev::revwalk::RevwalkCache;
@@ -175,6 +174,9 @@ impl CocoGitto {
         // I know this isn't clean, pls don't bother me about it
         // Also, I consider the current behaviour to be a bug; I don't think that disabling
         // tag generation should make cog ignore the `package.public_api` setting
+        // Additionally, I'm not quite sure how SETTINGS.generate_mono_repository_package_tags
+        // is supposed to work, as it kind of disables package versions in general (no tags means
+        // cog will never find a current version)
         let filter_after_increment =
             opts.increment == IncrementCommand::Auto && filter == CommitRangeFilter::Global;
         if !filter_after_increment {
@@ -281,39 +283,33 @@ impl CocoGitto {
         Ok(())
     }
 
-    fn create_bump_commit<P1, P2>(
+    fn create_bump_commit<P>(
         &self,
-        bump: &BumpData<P1>,
-        opts: &BumpOptions<P2>,
+        opts: &BumpOptions<P>,
+        message: impl std::fmt::Display,
     ) -> Result<()> {
         if opts.disable_bump_commit || SETTINGS.disable_bump_commit {
             return Ok(());
         }
 
-        let sign = self.repository.gpg_sign();
+        let mut message = format!("chore(version): {message}");
+
         let skip_ci = opts
             .skip_ci_override
             .as_deref()
             .or(opts.skip_ci.then_some(&SETTINGS.skip_ci));
-        let message = if let Some(skip_ci) = skip_ci {
-            format!("chore(version): {} {}", bump.next, skip_ci)
-        } else {
-            format!("chore(version): {}", bump.next)
-        };
+        if let Some(skip_ci) = skip_ci {
+            message += " ";
+            message += skip_ci;
+        }
+
+        let sign = self.repository.gpg_sign();
         self.repository.commit(&message, sign, true)?;
 
         Ok(())
     }
 
     fn create_bump_tag<P1, P2>(&self, bump: &BumpData<P1>, opts: &BumpOptions<P2>) -> Result<()> {
-        if !opts.disable_bump_commit
-            && !SETTINGS.disable_bump_commit
-            && self.repository.is_dirty(true)
-        {
-            let statuses = self.repository.get_statuses()?;
-            bail!(Git2Error::ChangesNeedToBeCommitted(statuses));
-        }
-
         let head = self.repository.get_head_commit()?.into_object();
         let tag = bump.next.to_string();
 
