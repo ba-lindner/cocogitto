@@ -167,12 +167,14 @@ impl CocoGitto {
             }
         }
 
-        if let Some(pre_release) = opts.pre_release {
-            next.version.pre = Prerelease::new(pre_release)?;
-        }
+        if current.version != next.version {
+            if let Some(pre_release) = opts.pre_release {
+                next.version.pre = Prerelease::new(pre_release)?;
+            }
 
-        if let Some(build) = opts.build {
-            next.version.build = BuildMetadata::new(build)?;
+            if let Some(build) = opts.build {
+                next.version.build = BuildMetadata::new(build)?;
+            }
         }
 
         // ensure version doesn't decrease
