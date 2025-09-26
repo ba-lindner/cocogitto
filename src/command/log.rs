@@ -7,8 +7,10 @@ use std::fmt::Write;
 
 impl CocoGitto {
     pub fn get_log(&self, filters: CommitFilters) -> Result<String> {
-        let mut range = self.repository.revwalk(&RevSpec::default())?;
-        range.apply_ignore_settings();
+        let range = self
+            .repository
+            .revwalk(&RevSpec::default())?
+            .apply_ignore_settings();
         let logs = range
             .iter()
             // Remove merge commits

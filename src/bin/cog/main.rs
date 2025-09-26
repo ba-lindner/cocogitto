@@ -19,7 +19,7 @@ use clap::builder::{PossibleValue, PossibleValuesParser};
 use clap::{ArgAction, ArgGroup, Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::{shells, Generator};
 use clap_complete_nushell::Nushell;
-use cocogitto::command::bump::BumpOptions;
+use cocogitto::command::bump::{BumpOptions, BumpTargets};
 use cocogitto::command::commit::CommitOptions;
 use cocogitto::settings::GitHookType;
 
@@ -473,21 +473,25 @@ fn main() -> Result<()> {
                 skip_ci_override,
                 skip_untracked,
                 disable_bump_commit,
-                package: (),
             };
 
-            if let Some(package_name) = package {
-                let package = SETTINGS
-                    .packages
-                    .get(&package_name)
-                    .expect("validated by clap");
-                let opts = opts.set_package((package_name.as_str(), package));
-                cocogitto.create_package_version(opts)?
+            let targets = if let Some(package_name) = package {
+                BumpTargets::package(package_name)
             } else if is_monorepo {
-                cocogitto.create_monorepo_version(opts)?
+                BumpTargets {
+                    standard: false,
+                    global: SETTINGS.generate_mono_repository_global_tag,
+                    pkg: if opts.increment == IncrementCommand::Auto {
+                        SETTINGS.packages.keys().cloned().collect()
+                    } else {
+                        Vec::new()
+                    },
+                }
             } else {
-                cocogitto.create_version(opts)?
-            }
+                BumpTargets::standard()
+            };
+
+            cocogitto.create_version(opts, &targets)?;
         }
         Command::Verify {
             message,

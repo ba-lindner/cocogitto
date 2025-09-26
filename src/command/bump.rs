@@ -1,6 +1,7 @@
-use crate::conventional::changelog::error::ChangelogError;
 use crate::conventional::changelog::release::Release;
-use crate::conventional::changelog::template::{PackageContext, ToContext};
+use crate::conventional::changelog::template::{
+    Empty, MonoRepoContext, PackageBumpContext, PackageContext, ToContext,
+};
 use crate::conventional::changelog::Renderer;
 use crate::conventional::commit::Commit;
 
@@ -26,10 +27,6 @@ use std::fmt;
 use std::fmt::Write;
 use std::process::{exit, Command};
 
-mod monorepo;
-mod package;
-mod standard;
-
 pub type WithPkg<'p> = (&'p str, &'p MonoRepoPackage);
 
 pub trait MaybePkg {
@@ -49,7 +46,7 @@ impl MaybePkg for WithPkg<'_> {
 }
 
 #[derive(Default)]
-pub struct BumpOptions<'a, P = ()> {
+pub struct BumpOptions<'a> {
     pub increment: IncrementCommand,
     pub pre_release: Option<&'a str>,
     pub build: Option<&'a str>,
@@ -60,25 +57,6 @@ pub struct BumpOptions<'a, P = ()> {
     pub skip_ci_override: Option<String>,
     pub skip_untracked: bool,
     pub disable_bump_commit: bool,
-    pub package: P,
-}
-
-impl<'a, P> BumpOptions<'a, P> {
-    pub fn set_package<P2>(self, package: P2) -> BumpOptions<'a, P2> {
-        BumpOptions {
-            increment: self.increment,
-            pre_release: self.pre_release,
-            build: self.build,
-            hooks_config: self.hooks_config,
-            annotated: self.annotated,
-            dry_run: self.dry_run,
-            skip_ci: self.skip_ci,
-            skip_ci_override: self.skip_ci_override,
-            skip_untracked: self.skip_untracked,
-            disable_bump_commit: self.disable_bump_commit,
-            package,
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -90,6 +68,15 @@ struct BumpData<P = ()> {
 }
 
 impl<P> BumpData<P> {
+    fn set_package<P2>(self, package: P2) -> BumpData<P2> {
+        BumpData {
+            current: self.current,
+            next: self.next,
+            release: self.release,
+            package,
+        }
+    }
+
     fn increment(&self) -> Increment {
         self.next
             .get_increment_from(&self.current)
@@ -139,13 +126,12 @@ impl CocoGitto {
         Ok(())
     }
 
-    fn get_next_version<'c, P: Copy>(
+    fn get_next_version<'c>(
         &'c self,
-        opts: &'_ BumpOptions<P>,
+        opts: &'_ BumpOptions,
         filter: CommitRangeFilter<'_>,
-        cache: Option<&'_ mut RevwalkCache<'c>>,
-        allow_empty: bool,
-    ) -> Result<BumpData<P>> {
+        cache: &'_ mut RevwalkCache<'c>,
+    ) -> Result<BumpData> {
         let current = self
             .repository
             .get_latest_tag(filter.as_package(), false)
@@ -159,40 +145,18 @@ impl CocoGitto {
             .filter(|tag| *tag > current);
 
         let spec = RevSpec::from_tag(&current);
-        let mut range = if let Some(cache) = cache {
-            self.repository.revwalk_cached(&spec, cache)?
-        } else {
-            self.repository.revwalk(&spec)?
-        };
-        range.apply_ignore_settings();
-        // ugly workaround
-        // the below combination of parameters is only used for the global tag in monorepos
-        // if SETTINGS.generate_mono_repository_package_tags is not set
-        // in this special case, the release (built from `range`) contains only global commits,
-        // while the bump has to consider all commits
-        // so in this case, we need to apply the filter after bumping
-        // I know this isn't clean, pls don't bother me about it
-        // Also, I consider the current behaviour to be a bug; I don't think that disabling
-        // tag generation should make cog ignore the `package.public_api` setting
-        // Additionally, I'm not quite sure how SETTINGS.generate_mono_repository_package_tags
-        // is supposed to work, as it kind of disables package versions in general (no tags means
-        // cog will never find a current version)
-        let filter_after_increment =
-            opts.increment == IncrementCommand::Auto && filter == CommitRangeFilter::Global;
-        if !filter_after_increment {
-            range.filter(filter)?;
-        }
+        let range = self
+            .repository
+            .revwalk_cached(&spec, cache)?
+            .apply_ignore_settings()
+            .filter(filter)?;
         let mut next = match current.bump(&opts.increment, &range) {
             Ok(tag) => tag,
-            Err(crate::conventional::error::BumpError::NoCommitFound) if allow_empty => {
+            Err(crate::conventional::error::BumpError::NoCommitFound) => {
                 current.clone().reset_metadata()
             }
             Err(other) => bail!(other),
         };
-
-        if filter_after_increment {
-            range.filter(filter)?;
-        }
 
         // if prerelease exists, ensure the new tag is not smaller
         if let Some(pre_release) = &current_prerelease {
@@ -223,11 +187,7 @@ impl CocoGitto {
 
         let mut release = Release::build_single(range, filter);
         if release.commits.is_empty() {
-            if allow_empty {
-                release.from = current.clone().into();
-            } else {
-                bail!(ChangelogError::EmptyRelease);
-            }
+            release.from = current.clone().into();
         }
         release.version = next.clone().into();
 
@@ -235,7 +195,7 @@ impl CocoGitto {
             current,
             next,
             release,
-            package: opts.package,
+            package: (),
         })
     }
 
@@ -283,9 +243,9 @@ impl CocoGitto {
         Ok(())
     }
 
-    fn create_bump_commit<P>(
+    fn create_bump_commit(
         &self,
-        opts: &BumpOptions<P>,
+        opts: &BumpOptions,
         message: impl std::fmt::Display,
     ) -> Result<()> {
         if opts.disable_bump_commit || SETTINGS.disable_bump_commit {
@@ -309,7 +269,7 @@ impl CocoGitto {
         Ok(())
     }
 
-    fn create_bump_tag<P1, P2>(&self, bump: &BumpData<P1>, opts: &BumpOptions<P2>) -> Result<()> {
+    fn create_bump_tag<P>(&self, bump: &BumpData<P>, opts: &BumpOptions) -> Result<()> {
         let head = self.repository.get_head_commit()?.into_object();
         let tag = bump.next.to_string();
 
@@ -463,6 +423,166 @@ impl Release {
                 CommitType::BugFix => info!("\tFound bug fix commit {}", commit.shorthand().blue()),
                 _ => (),
             }
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BumpTargets {
+    pub standard: bool,
+    pub global: bool,
+    pub pkg: Vec<String>,
+}
+
+impl BumpTargets {
+    pub fn standard() -> Self {
+        Self {
+            standard: true,
+            global: false,
+            pkg: Vec::new(),
+        }
+    }
+
+    pub fn monorepo() -> Self {
+        Self {
+            standard: false,
+            global: true,
+            pkg: SETTINGS.packages.keys().cloned().collect(),
+        }
+    }
+
+    pub fn monorepo_global() -> Self {
+        Self {
+            standard: false,
+            global: true,
+            pkg: Vec::new(),
+        }
+    }
+
+    pub fn all_packages() -> Self {
+        Self {
+            standard: false,
+            global: false,
+            pkg: SETTINGS.packages.keys().cloned().collect(),
+        }
+    }
+
+    pub fn package(pkg: impl Into<String>) -> Self {
+        Self {
+            standard: false,
+            global: false,
+            pkg: vec![pkg.into()],
+        }
+    }
+}
+
+impl CocoGitto {
+    pub fn create_version(&mut self, mut opts: BumpOptions, targets: &BumpTargets) -> Result<()> {
+        self.pre_bump_checks(opts.skip_untracked)?;
+        let mut cache = RevwalkCache::new();
+
+        let mut pkg_bumps = targets
+            .pkg
+            .iter()
+            .map(|package_name: &String| {
+                let package = &SETTINGS.packages[package_name];
+                self.get_next_version(&opts, CommitRangeFilter::Package(package_name), &mut cache)
+                    .map(|bump| bump.set_package((package_name.as_str(), package)))
+            })
+            .filter_ok(|bump| bump.increment() > Increment::NoBump)
+            .collect::<Result<Vec<_>, _>>()?;
+        pkg_bumps.sort_by_key(|bump| bump.package.1.bump_order);
+        let pkg_bumps = pkg_bumps;
+
+        if opts.increment == IncrementCommand::Auto {
+            opts.increment = IncrementCommand::AutoMonoRepoGlobal(
+                pkg_bumps
+                    .iter()
+                    .filter(|bump| bump.package.1.public_api)
+                    .map(|bump| bump.increment())
+                    .max(),
+            )
+        }
+
+        let global_filter = if targets.standard {
+            Some(CommitRangeFilter::None)
+        } else if targets.global {
+            Some(CommitRangeFilter::Global)
+        } else {
+            None
+        };
+        let global_bump = global_filter
+            .map(|filter| self.get_next_version(&opts, filter, &mut cache))
+            .transpose()?
+            .filter(|bump| bump.increment() > Increment::NoBump);
+        drop(cache);
+
+        if pkg_bumps.is_empty() && global_bump.is_none() {
+            print!(
+                "No conventional commits found that required a bump. Changelogs will be updated on the next bump.\nPre-Hooks and Post-Hooks have been skipped.\n"
+            );
+            return Ok(());
+        }
+
+        if opts.dry_run {
+            for bump in pkg_bumps {
+                println!("{}", bump.next)
+            }
+            if let Some(bump) = global_bump {
+                println!("{}", bump.next);
+            }
+            return Ok(());
+        }
+
+        if let Some(bump) = &global_bump {
+            self.render_changelog(
+                bump,
+                MonoRepoContext {
+                    package_lock: matches!(opts.increment, IncrementCommand::AutoMonoRepoGlobal(_)),
+                    packages: pkg_bumps
+                        .iter()
+                        .map(|bump| PackageBumpContext {
+                            package_name: bump.package.0,
+                            package_path: bump.package.1.path.display().to_string(),
+                            version: bump.next.clone().into(),
+                            from: Some(if bump.current.is_zero() {
+                                self.repository.get_cache().first.into()
+                            } else {
+                                bump.current.clone().into()
+                            }),
+                        })
+                        .collect(),
+                },
+            )?;
+            self.run_hooks(HookType::PreBump, &bump, opts.hooks_config)?;
+        }
+
+        for bump in &pkg_bumps {
+            self.render_changelog(bump, Empty)?;
+            self.run_hooks(HookType::PreBump, bump, opts.hooks_config)?;
+        }
+
+        if let Some(bump) = &global_bump {
+            self.create_bump_commit(&opts, &bump.next)?;
+            self.create_bump_tag(bump, &opts)?;
+        } else {
+            self.create_bump_commit(&opts, "bump packages")?;
+        }
+
+        if SETTINGS.generate_mono_repository_package_tags {
+            for bump in &pkg_bumps {
+                self.create_bump_tag(bump, &opts)?;
+            }
+        }
+
+        for bump in &pkg_bumps {
+            self.run_hooks(HookType::PostBump, bump, opts.hooks_config)?;
+        }
+
+        if let Some(bump) = &global_bump {
+            self.run_hooks(HookType::PostBump, bump, opts.hooks_config)?;
         }
 
         Ok(())

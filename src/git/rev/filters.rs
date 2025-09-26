@@ -89,11 +89,12 @@ impl CommitRangeFilter<'_> {
 
 impl CommitRange<'_> {
     /// Apply `SETTINGS.ignore_merge_commits` and `SETTINGS.ignore_fixup_commits`
-    pub fn apply_ignore_settings(&mut self) {
+    pub fn apply_ignore_settings(mut self) -> Self {
         self.filter_merge_fixup_commits(
             SETTINGS.ignore_merge_commits,
             SETTINGS.ignore_fixup_commits,
         );
+        self
     }
 
     /// Filter out merge or fixup commits
@@ -117,7 +118,7 @@ impl CommitRange<'_> {
         }
     }
 
-    pub fn filter(&mut self, filter: CommitRangeFilter<'_>) -> Result<(), Git2Error> {
+    pub fn filter(mut self, filter: CommitRangeFilter<'_>) -> Result<Self, Git2Error> {
         match filter {
             CommitRangeFilter::None => {}
             CommitRangeFilter::Global => {
@@ -143,17 +144,15 @@ impl CommitRange<'_> {
                 })?;
             }
         }
-        Ok(())
-    }
-
-    pub fn global(mut self) -> Result<Self, Git2Error> {
-        self.filter(CommitRangeFilter::Global)?;
         Ok(self)
     }
 
-    pub fn package(mut self, package: &str) -> Result<Self, Git2Error> {
-        self.filter(CommitRangeFilter::Package(package))?;
-        Ok(self)
+    pub fn global(self) -> Result<Self, Git2Error> {
+        self.filter(CommitRangeFilter::Global)
+    }
+
+    pub fn package(self, package: &str) -> Result<Self, Git2Error> {
+        self.filter(CommitRangeFilter::Package(package))
     }
 
     fn filter_impl(

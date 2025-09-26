@@ -280,8 +280,12 @@ mod test {
         let variables = output.split(';').map(|s| s.trim()).collect::<Vec<&str>>();
         let ssh_auth_sock = variables[0].split('=').collect::<Vec<&str>>()[1];
         let ssh_agent_pid = variables[2].split('=').collect::<Vec<&str>>()[1];
-        std::env::set_var("SSH_AUTH_SOCK", ssh_auth_sock);
-        std::env::set_var("SSH_AGENT_PID", ssh_agent_pid);
+        // SAFETY
+        // it's a single threaded test, so it should be fine
+        unsafe {
+            std::env::set_var("SSH_AUTH_SOCK", ssh_auth_sock);
+            std::env::set_var("SSH_AGENT_PID", ssh_agent_pid);
+        }
 
         run_cmd!(
             git init;
