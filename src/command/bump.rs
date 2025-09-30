@@ -145,7 +145,7 @@ impl CocoGitto {
             .filter(|tag| *tag > current);
 
         let spec = RevSpec::from_tag(&current);
-        let range = self
+        let mut range = self
             .repository
             .revwalk_cached(&spec, cache)?
             .apply_ignore_settings()
@@ -185,6 +185,13 @@ impl CocoGitto {
             );
         }
 
+        if let (Some(_), Some(pre)) = (opts.pre_release, current_prerelease) {
+            range = self
+                .repository
+                .revwalk_cached(&RevSpec::from_tag(&pre), cache)?
+                .apply_ignore_settings()
+                .filter(filter)?;
+        }
         let mut release = Release::build_single(range, filter);
         if release.commits.is_empty() {
             release.from = current.clone().into();
