@@ -500,7 +500,9 @@ impl CocoGitto {
                 self.get_next_version(&opts, CommitRangeFilter::Package(package_name), &mut cache)
                     .map(|bump| bump.set_package((package_name.as_str(), package)))
             })
-            .filter_ok(|bump| bump.increment() > Increment::NoBump)
+            .filter_ok(|bump| {
+                bump.increment() > Increment::NoBump && !bump.release.commits.is_empty()
+            })
             .collect::<Result<Vec<_>, _>>()?;
         pkg_bumps.sort_by_key(|bump| bump.package.1.bump_order);
         let pkg_bumps = pkg_bumps;
@@ -525,7 +527,9 @@ impl CocoGitto {
         let global_bump = global_filter
             .map(|filter| self.get_next_version(&opts, filter, &mut cache))
             .transpose()?
-            .filter(|bump| bump.increment() > Increment::NoBump);
+            .filter(|bump| {
+                bump.increment() > Increment::NoBump && !bump.release.commits.is_empty()
+            });
         drop(cache);
 
         if pkg_bumps.is_empty() && global_bump.is_none() {
