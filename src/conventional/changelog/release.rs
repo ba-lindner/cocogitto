@@ -75,22 +75,22 @@ impl Display for ReleaseVersion {
 }
 
 #[derive(Debug, Serialize)]
-pub struct Release {
+pub struct Release<'a> {
     pub version: ReleaseVersion,
     pub from: ReleaseVersion,
     pub date: NaiveDateTime,
     pub commits: Vec<ChangelogCommit>,
-    pub package_bumps: Vec<PackageBumpContext<'static>>,
+    pub packages: Vec<PackageBumpContext<'a>>,
 }
 
-impl Release {
+impl Release<'_> {
     pub fn empty() -> Self {
         Self {
             version: ReleaseVersion::empty(),
             from: ReleaseVersion::empty(),
             date: Utc::now().naive_local(),
             commits: Vec::new(),
-            package_bumps: Vec::new(),
+            packages: Vec::new(),
         }
     }
 
@@ -120,7 +120,7 @@ impl Release {
                 .filter(|commit| !commit.should_omit())
                 .map(ChangelogCommit::from)
                 .collect(),
-            package_bumps: Vec::new(),
+            packages: Vec::new(),
         }
     }
 }
@@ -269,10 +269,10 @@ mod test {
     #[test]
     fn should_render_template_monorepo() -> Result<()> {
         // Arrange
-        let release = Release::fixture();
+        let release = Release::fixture_monorepo();
         let renderer = Renderer::new(Template::MONOREPO_DEFAULT)?;
 
-        let renderer = monorepo_renderer(renderer)?;
+        let renderer = monorepo_renderer(renderer, false)?;
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -301,10 +301,10 @@ mod test {
     #[test]
     fn should_render_template_monorepo_for_manual_bump() -> Result<()> {
         // Arrange
-        let release = Release::fixture();
+        let release = Release::fixture_manual();
         let renderer = Renderer::new(Template::MONOREPO_DEFAULT)?;
 
-        let renderer = monorepo_manual_bump_rendered(renderer)?;
+        let renderer = monorepo_renderer(renderer, true)?;
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -333,10 +333,10 @@ mod test {
     #[test]
     fn should_render_full_hash_template_monorepo() -> Result<()> {
         // Arrange
-        let release = Release::fixture();
+        let release = Release::fixture_monorepo();
         let renderer = Renderer::new(Template::MONOREPO_FULL_HASH)?;
 
-        let renderer = monorepo_renderer(renderer)?;
+        let renderer = monorepo_renderer(renderer, false)?;
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -365,10 +365,10 @@ mod test {
     #[test]
     fn should_render_full_hash_template_manual_monorepo() -> Result<()> {
         // Arrange
-        let release = Release::fixture();
+        let release = Release::fixture_manual();
         let renderer = Renderer::new(Template::MONOREPO_FULL_HASH)?;
 
-        let renderer = monorepo_manual_bump_rendered(renderer)?;
+        let renderer = monorepo_renderer(renderer, true)?;
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -397,11 +397,11 @@ mod test {
     #[test]
     fn should_render_remote_template_monorepo() -> Result<()> {
         // Arrange
-        let release = Release::fixture();
+        let release = Release::fixture_monorepo();
         let renderer =
             Renderer::new(Template::MONOREPO_REMOTE)?.with_context(RemoteContext::fixture());
 
-        let renderer = monorepo_renderer(renderer)?;
+        let renderer = monorepo_renderer(renderer, false)?;
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -515,11 +515,11 @@ mod test {
     #[test]
     fn should_render_remote_template_monorepo_for_manual_bump() -> Result<()> {
         // Arrange
-        let release = Release::fixture();
+        let release = Release::fixture_manual();
         let renderer =
             Renderer::new(Template::MONOREPO_REMOTE)?.with_context(RemoteContext::fixture());
 
-        let renderer = monorepo_manual_bump_rendered(renderer)?;
+        let renderer = monorepo_renderer(renderer, true)?;
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -545,78 +545,8 @@ mod test {
         Ok(())
     }
 
-    fn monorepo_renderer(renderer: Renderer) -> Result<Renderer> {
-        let renderer = renderer.with_context(MonoRepoContext {
-            package_lock: false,
-            packages: vec![
-                PackageBumpContext {
-                    package_name: "one",
-                    package_path: "crates/one".to_string(),
-                    version: Tag::from_str(
-                        "0.1.0",
-                        Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
-                    )?
-                    .into(),
-                    from: Some(
-                        Tag::from_str(
-                            "0.2.0",
-                            Some(
-                                Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap(),
-                            ),
-                        )?
-                        .into(),
-                    ),
-                },
-                PackageBumpContext {
-                    package_name: "two",
-                    package_path: "crates/two".to_string(),
-                    version: Tag::from_str(
-                        "0.2.0",
-                        Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
-                    )?
-                    .into(),
-                    from: Some(
-                        Tag::from_str(
-                            "0.3.0",
-                            Some(
-                                Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap(),
-                            ),
-                        )?
-                        .into(),
-                    ),
-                },
-            ],
-        });
-
-        Ok(renderer)
-    }
-
-    fn monorepo_manual_bump_rendered(renderer: Renderer) -> Result<Renderer> {
-        let renderer = renderer.with_context(MonoRepoContext {
-            package_lock: true,
-            packages: vec![
-                PackageBumpContext {
-                    package_name: "one",
-                    package_path: "crates/one".to_string(),
-                    version: Tag::from_str(
-                        "0.1.0",
-                        Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
-                    )?
-                    .into(),
-                    from: None,
-                },
-                PackageBumpContext {
-                    package_name: "two",
-                    package_path: "crates/two".to_string(),
-                    version: Tag::from_str(
-                        "0.2.0",
-                        Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
-                    )?
-                    .into(),
-                    from: None,
-                },
-            ],
-        });
+    fn monorepo_renderer(renderer: Renderer, package_lock: bool) -> Result<Renderer> {
+        let renderer = renderer.with_context(MonoRepoContext { package_lock });
 
         Ok(renderer)
     }
@@ -640,8 +570,8 @@ mod test {
         }
     }
 
-    impl Release {
-        pub fn fixture() -> Release {
+    impl Release<'_> {
+        pub fn fixture() -> Release<'static> {
             let date =
                 NaiveDateTime::parse_from_str("2015-09-05 23:56:04", "%Y-%m-%d %H:%M:%S").unwrap();
 
@@ -723,8 +653,84 @@ mod test {
                         },
                     },
                 ],
-                package_bumps: Vec::new(),
+                packages: Vec::new(),
             }
+        }
+
+        pub fn fixture_monorepo() -> Release<'static> {
+            let mut release = Self::fixture();
+            release.packages = vec![
+                PackageBumpContext {
+                    package_name: "one",
+                    package_path: "crates/one".to_string(),
+                    version: Tag::from_str(
+                        "0.1.0",
+                        Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
+                    )
+                    .unwrap()
+                    .into(),
+                    from: Some(
+                        Tag::from_str(
+                            "0.2.0",
+                            Some(
+                                Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap(),
+                            ),
+                        )
+                        .unwrap()
+                        .into(),
+                    ),
+                },
+                PackageBumpContext {
+                    package_name: "two",
+                    package_path: "crates/two".to_string(),
+                    version: Tag::from_str(
+                        "0.2.0",
+                        Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
+                    )
+                    .unwrap()
+                    .into(),
+                    from: Some(
+                        Tag::from_str(
+                            "0.3.0",
+                            Some(
+                                Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap(),
+                            ),
+                        )
+                        .unwrap()
+                        .into(),
+                    ),
+                },
+            ];
+            release
+        }
+
+        pub fn fixture_manual() -> Release<'static> {
+            let mut release = Self::fixture();
+            release.packages = vec![
+                PackageBumpContext {
+                    package_name: "one",
+                    package_path: "crates/one".to_string(),
+                    version: Tag::from_str(
+                        "0.1.0",
+                        Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
+                    )
+                    .unwrap()
+                    .into(),
+                    from: None,
+                },
+                PackageBumpContext {
+                    package_name: "two",
+                    package_path: "crates/two".to_string(),
+                    version: Tag::from_str(
+                        "0.2.0",
+                        Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
+                    )
+                    .unwrap()
+                    .into(),
+                    from: None,
+                },
+            ];
+            release
         }
     }
 }

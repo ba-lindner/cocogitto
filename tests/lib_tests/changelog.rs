@@ -4,7 +4,7 @@ use cmd_lib::run_cmd;
 use sealed_test::prelude::*;
 use speculoos::prelude::*;
 
-use cocogitto::CocoGitto;
+use cocogitto::{git::rev::filters::CommitRangeFilter, CocoGitto};
 
 use crate::helpers::{git_commit, git_init, git_log_head_sha, git_tag};
 
@@ -36,9 +36,10 @@ fn getting_changelog_from_tags_should_produce_the_same_range_either_from_tags_or
     // Act
     let cocogitto = CocoGitto::get()?;
     let changelog_from_commit_range =
-        cocogitto.get_changelog(&format!("{sha_0_1}..{head}"), false)?;
-    let changelog_tag_range = cocogitto.get_changelog("0.1.0..0.2.0", false)?;
-    let at_tag = cocogitto.get_changelog("..0.2.0", false)?;
+        cocogitto.get_changelog_range(&format!("{sha_0_1}..{head}"), CommitRangeFilter::None)?;
+    let changelog_tag_range =
+        cocogitto.get_changelog_range("0.1.0..0.2.0", CommitRangeFilter::None)?;
+    let at_tag = cocogitto.get_changelog_range("..0.2.0", CommitRangeFilter::None)?;
 
     let commit_range_oids: Vec<_> = changelog_from_commit_range[0]
         .commits
@@ -91,8 +92,8 @@ fn from_commit_should_be_drained() -> Result<()> {
 
     // Act
     let cocogitto = CocoGitto::get()?;
-    let changelog_from_commit_range =
-        cocogitto.get_changelog(&format!("{unttaged_sha}..{head}"), true)?;
+    let changelog_from_commit_range = cocogitto
+        .get_changelog_range(&format!("{unttaged_sha}..{head}"), CommitRangeFilter::None)?;
 
     let commit_range_oids: Vec<_> = changelog_from_commit_range[0]
         .commits

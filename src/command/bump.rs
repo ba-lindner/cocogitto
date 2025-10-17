@@ -1,6 +1,6 @@
 use crate::conventional::changelog::release::Release;
 use crate::conventional::changelog::template::{
-    Empty, MonoRepoContext, PackageBumpContext, PackageContext, ToContext,
+    MonoRepoContext, PackageBumpContext, PackageContext,
 };
 use crate::conventional::changelog::Renderer;
 use crate::conventional::commit::Commit;
@@ -60,15 +60,15 @@ pub struct BumpOptions<'a> {
 }
 
 #[derive(Debug)]
-struct BumpData<P = ()> {
+struct BumpData<'a, P = ()> {
     current: Tag,
     next: Tag,
-    release: Release,
+    release: Release<'a>,
     package: P,
 }
 
-impl<P> BumpData<P> {
-    fn set_package<P2>(self, package: P2) -> BumpData<P2> {
+impl<'a, P> BumpData<'a, P> {
+    fn set_package<P2>(self, package: P2) -> BumpData<'a, P2> {
         BumpData {
             current: self.current,
             next: self.next,
@@ -131,7 +131,7 @@ impl CocoGitto {
         opts: &'_ BumpOptions,
         filter: CommitRangeFilter<'_>,
         cache: &'_ mut RevwalkCache<'c>,
-    ) -> Result<BumpData> {
+    ) -> Result<BumpData<'static>> {
         let current = self
             .repository
             .get_latest_tag(filter.as_package(), false)
@@ -208,11 +208,7 @@ impl CocoGitto {
         })
     }
 
-    fn render_changelog<P: MaybePkg>(
-        &self,
-        bump: &BumpData<P>,
-        context: impl ToContext,
-    ) -> Result<()> {
+    fn render_changelog<P: MaybePkg>(&self, bump: &BumpData<P>, package_lock: bool) -> Result<()> {
         if SETTINGS.disable_changelog {
             return Ok(());
         }
@@ -242,8 +238,8 @@ impl CocoGitto {
         };
 
         renderer
+            .with_context(MonoRepoContext { package_lock })
             .with_context(&*SETTINGS)
-            .with_context(context)
             .render_single(&bump.release)?
             .write_to_file(path)?;
 
@@ -385,7 +381,7 @@ impl CocoGitto {
     }
 }
 
-impl Release {
+impl Release<'_> {
     fn pretty_print_bump_summary(&self) -> Result<(), fmt::Error> {
         let conventional_commits: Vec<&Commit> = self
             .commits
@@ -524,12 +520,10 @@ impl CocoGitto {
         } else {
             None
         };
-        let global_bump = global_filter
+        let mut global_bump = global_filter
             .map(|filter| self.get_next_version(&opts, filter, &mut cache))
             .transpose()?
-            .filter(|bump| {
-                bump.increment() > Increment::NoBump && !bump.release.commits.is_empty()
-            });
+            .filter(|bump| bump.increment() > Increment::NoBump);
         drop(cache);
 
         if pkg_bumps.is_empty() && global_bump.is_none() {
@@ -549,31 +543,29 @@ impl CocoGitto {
             return Ok(());
         }
 
-        if let Some(bump) = &global_bump {
+        if let Some(bump) = &mut global_bump {
+            bump.release.packages = pkg_bumps
+                .iter()
+                .map(|bump| PackageBumpContext {
+                    package_name: bump.package.0,
+                    package_path: bump.package.1.path.display().to_string(),
+                    version: bump.next.clone().into(),
+                    from: Some(if bump.current.is_zero() {
+                        self.repository.get_cache().first.into()
+                    } else {
+                        bump.current.clone().into()
+                    }),
+                })
+                .collect();
             self.render_changelog(
                 bump,
-                MonoRepoContext {
-                    package_lock: matches!(opts.increment, IncrementCommand::AutoMonoRepoGlobal(_)),
-                    packages: pkg_bumps
-                        .iter()
-                        .map(|bump| PackageBumpContext {
-                            package_name: bump.package.0,
-                            package_path: bump.package.1.path.display().to_string(),
-                            version: bump.next.clone().into(),
-                            from: Some(if bump.current.is_zero() {
-                                self.repository.get_cache().first.into()
-                            } else {
-                                bump.current.clone().into()
-                            }),
-                        })
-                        .collect(),
-                },
+                matches!(opts.increment, IncrementCommand::AutoMonoRepoGlobal(_)),
             )?;
             self.run_hooks(HookType::PreBump, &bump, opts.hooks_config)?;
         }
 
         for bump in &pkg_bumps {
-            self.render_changelog(bump, Empty)?;
+            self.render_changelog(bump, false)?;
             self.run_hooks(HookType::PreBump, bump, opts.hooks_config)?;
         }
 

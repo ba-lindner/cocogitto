@@ -4,11 +4,13 @@ mod mangen;
 use std::fs;
 use std::path::PathBuf;
 
-use cocogitto::conventional::changelog::template::{RemoteContext, Template};
+use cocogitto::conventional::changelog::template::{MonoRepoContext, RemoteContext, Template};
 use cocogitto::conventional::changelog::Renderer;
 use cocogitto::conventional::commit as conv_commit;
 use cocogitto::conventional::version::{Increment, IncrementCommand};
 
+use cocogitto::git::rev::filters::CommitRangeFilter;
+use cocogitto::git::tag::Tag;
 use cocogitto::log::filter::{CommitFilter, CommitFilters};
 use cocogitto::log::output::Output;
 use cocogitto::{set_config_path, CocoGitto, CommitHook, DEFAULT_CONFIG_PATH, SETTINGS};
@@ -214,6 +216,7 @@ enum Command {
     },
 
     /// Display a changelog for the given commit oid range
+    #[command(group = ArgGroup::new("target").required(false))]
     Changelog {
         /// Generate the changelog in the given spec range
         #[arg(conflicts_with = "at")]
@@ -242,11 +245,33 @@ enum Command {
         #[arg(long, requires_all = ["owner", "remote"])]
         repository: Option<String>,
 
+        /// Lock package versions
+        ///
+        /// Mimics the behaviour of manual bumping, where only the global version is updated
+        /// and packages are locked to the current version
+        #[arg(long)]
+        locked: bool,
+
+        /// Generate package changelog
+        ///
+        /// Generate a changelog containing only changes regarding specified package.
+        ///
+        /// This is the default behaviour if a package tag is given via `--at`.
+        #[arg(short, long, group = "target", value_parser = packages())]
+        package: Option<String>,
+
+        /// Generate monorepo global changelog
+        ///
+        /// Generate a changelog containing only changes outside of any package, aswell as
+        /// information on package bumps
+        #[arg(short, long, group = "target")]
+        global: bool,
+
         /// Combine package and global changes into one changelog
         ///
         /// Note that the `monorepo_*` templates cannot be used with
         /// this option
-        #[arg(short, long)]
+        #[arg(short, long, group = "target")]
         combined: bool,
     },
 
@@ -622,6 +647,9 @@ fn main() -> Result<()> {
             remote,
             owner,
             repository,
+            locked,
+            package,
+            global,
             combined,
         } => {
             let cocogitto = CocoGitto::get()?;
@@ -632,7 +660,9 @@ fn main() -> Result<()> {
             } else {
                 Template::DEFAULT
             };
-            let mut renderer = Renderer::new(template)?;
+            let mut renderer = Renderer::new(template)?.with_context(MonoRepoContext {
+                package_lock: locked,
+            });
 
             let remote_context = RemoteContext::try_new(remote, repository, owner)
                 .or_else(|| SETTINGS.get_remote_context());
@@ -640,21 +670,37 @@ fn main() -> Result<()> {
                 renderer = renderer.with_context(context);
             }
 
-            // TODO: fallback to tag here
-            let pattern = pattern.as_deref().unwrap_or("..");
-            let release = match at {
-                Some(at) => cocogitto.get_changelog(&at, false)?,
-                None => {
-                    if !combined && !SETTINGS.packages.is_empty() {
-                        let (release, context) = cocogitto.get_monorepo_changelog(pattern)?;
-                        renderer = renderer.with_context(context);
-                        release
-                    } else {
-                        cocogitto.get_changelog(pattern, true)?
-                    }
-                }
+            // implicit target selection
+            let mut filter = if SETTINGS.packages.is_empty() {
+                CommitRangeFilter::None
+            } else {
+                CommitRangeFilter::Global
             };
-            let result = renderer.render(&release)?.0;
+            if let Some(tag) = &at {
+                let tag = Tag::from_str(tag, None)?;
+                if let Some(pkg) = tag.package {
+                    let pkg = Box::new(pkg).leak();
+                    filter = CommitRangeFilter::Package(pkg);
+                }
+            }
+            // explicit target selection
+            if let Some(pkg) = &package {
+                filter = CommitRangeFilter::Package(pkg);
+            } else if global {
+                filter = CommitRangeFilter::Global;
+            } else if combined {
+                filter = CommitRangeFilter::None;
+            }
+
+            let result = if let Some(tag) = at {
+                let release = cocogitto.get_changelog_at(&tag, filter)?;
+                renderer.render_single(&release)?
+            } else {
+                let pattern = pattern.as_deref().unwrap_or("..");
+                let releases = cocogitto.get_changelog_range(pattern, filter)?;
+                renderer.render(&releases)?
+            };
+
             println!("{result}");
         }
         Command::Init { path } => {

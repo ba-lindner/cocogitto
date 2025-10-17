@@ -1,5 +1,6 @@
 use crate::conventional::changelog::error::ChangelogError;
 
+use std::fmt::Display;
 use std::fs;
 use std::path::Path;
 
@@ -42,5 +43,11 @@ impl RenderOutput {
         fs::write(path.as_ref(), changelog_content)?;
 
         Ok(())
+    }
+}
+
+impl Display for RenderOutput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
     }
 }

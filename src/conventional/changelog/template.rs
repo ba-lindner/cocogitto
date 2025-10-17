@@ -79,9 +79,8 @@ pub struct RemoteContext {
 }
 
 #[derive(Debug, Serialize)]
-pub struct MonoRepoContext<'a> {
+pub struct MonoRepoContext {
     pub package_lock: bool,
-    pub packages: Vec<PackageBumpContext<'a>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -104,13 +103,6 @@ pub trait ToContext {
 impl<T: Serialize> ToContext for T {
     fn to_context(&self) -> Context {
         Context::from_serialize(self).expect("failed to serialize")
-    }
-}
-
-pub struct Empty;
-impl ToContext for Empty {
-    fn to_context(&self) -> Context {
-        Context::new()
     }
 }
 
