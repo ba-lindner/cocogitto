@@ -59,14 +59,16 @@ impl CocoGitto {
             packages,
         };
 
-        let commit_range = if unified {
-            self.repository.revwalk(pattern)?
-        } else {
+        let changelog = if unified {
             self.repository
-                .get_commit_range_for_monorepo_global(pattern)?
+                .build_unified_release(self.repository.revwalk(pattern)?)?
+        } else {
+            Release::try_from(
+                self.repository
+                    .get_commit_range_for_monorepo_global(pattern)?,
+            )?
         };
 
-        let changelog = Release::try_from(commit_range)?;
         changelog
             .into_markdown(template, ReleaseType::MonoRepo(context))
             .map_err(Into::into)

@@ -631,7 +631,7 @@ mod test {
         // Arrange
         let repository = init_monorepo()?;
         run_cmd!(
-            echo "feature" > one;
+            echo "feature" > one/feat;
             git add .;
             git commit -m "feat: feature package one";
         )?;
@@ -654,8 +654,9 @@ mod test {
     fn monorepo_auto_bump_should_succeed_with_only_package_commits() -> Result<()> {
         // Arrange
         let repository = git_init_no_gpg()?;
+        fs::create_dir("one")?;
         run_cmd!(
-            echo "feature" > one;
+            echo "feature" > one/feat;
             git add .;
             git commit -m "feat: feature package one";
         )?;
@@ -701,7 +702,7 @@ mod test {
             echo "global" > global;
             git add .;
             git commit -m "fix: global fix";
-            echo "feature" > one;
+            echo "feature" > one/feat;
             git add .;
             git commit -m "feat: feature 1 package one";
         )?;
@@ -726,7 +727,7 @@ mod test {
             echo "global" > global;
             git add .;
             git commit -m "feat: global fix";
-            echo "feature" > one;
+            echo "feature" > one/feat;
             git add .;
             git commit -m "fix: fix 1 package one";
         )?;
@@ -751,7 +752,7 @@ mod test {
             echo "global" > global;
             git add .;
             git commit -m "feat: global fix";
-            echo "feature" > one;
+            echo "feature" > one/feat;
             git add .;
             git commit -m "feature: package one";
         )?;
@@ -778,7 +779,7 @@ mod test {
             git commit -m "chore: version";
             git tag "0.1.0";
             git tag "one-0.1.0";
-            echo "feature" > one;
+            echo "feature" > one/feat;
             echo "global" > global;
             git add .;
             git commit -m "feature: package one and global";
@@ -817,6 +818,8 @@ mod test {
             git add .;
             git commit -m "chore: first commit";
         )?;
+
+        fs::create_dir("one")?;
 
         Ok(repository)
     }

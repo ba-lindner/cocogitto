@@ -1,4 +1,8 @@
-use git2::Commit;
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::LazyLock;
+
+use git2::{Commit, Diff};
 
 use crate::git::error::Git2Error;
 use crate::git::oid::OidOf;
@@ -7,7 +11,79 @@ use crate::git::rev::filters::PackagePathFilter;
 use crate::git::rev::CommitIter;
 use crate::SETTINGS;
 
+static PATH_FILTER: LazyLock<HashMap<String, PackagePathFilter>> = LazyLock::new(|| {
+    SETTINGS
+        .packages
+        .iter()
+        .map(|(name, package)| (name.clone(), PackagePathFilter::from_package(package)))
+        .collect()
+});
+
 impl Repository {
+    pub fn is_commit_global(&self, commit: &Commit<'_>) -> Result<bool, Git2Error> {
+        if commit.parent(0).is_err() {
+            return Ok(true);
+        }
+        Ok(Self::is_diff_global(&self.get_commit_diff(commit)?))
+    }
+
+    pub fn is_commit_in_package(
+        &self,
+        commit: &Commit<'_>,
+        package: &str,
+    ) -> Result<bool, Git2Error> {
+        Ok(Self::is_diff_in_package(
+            &self.get_commit_diff(commit)?,
+            package,
+        ))
+    }
+
+    pub fn packages_for_commit(&self, commit: &Commit<'_>) -> Result<Vec<String>, Git2Error> {
+        let mut packages = Vec::new();
+        let diff = self.get_commit_diff(commit)?;
+        for package in PATH_FILTER.keys() {
+            if Self::is_diff_in_package(&diff, package) {
+                packages.push(package.clone());
+            }
+        }
+        packages.sort();
+        if commit.parent(0).is_err() || Self::is_diff_global(&diff) {
+            packages.push("global".to_string());
+        }
+        Ok(packages)
+    }
+
+    fn get_commit_diff(&'_ self, commit: &Commit<'_>) -> Result<Diff<'_>, Git2Error> {
+        let parent = commit
+            .parent(0)
+            .ok()
+            .map(|commit| commit.tree())
+            .transpose()?;
+        let current = commit.tree()?;
+        self.0
+            .diff_tree_to_tree(parent.as_ref(), Some(&current), None)
+            .map_err(Into::into)
+    }
+
+    fn check_diff_paths(diff: &Diff, predicate: impl Fn(&Path) -> bool) -> bool {
+        diff.deltas().any(|delta| {
+            delta.old_file().path().is_some_and(&predicate)
+                || delta.new_file().path().is_some_and(&predicate)
+        })
+    }
+
+    fn is_diff_global(diff: &Diff) -> bool {
+        let filter = &*PATH_FILTER;
+        Self::check_diff_paths(diff, |path| {
+            filter.values().all(|filter| !filter.is_match(path))
+        })
+    }
+
+    fn is_diff_in_package(diff: &Diff, package: &str) -> bool {
+        let filter = PATH_FILTER.get(package).expect("invalid package");
+        Self::check_diff_paths(diff, |path| filter.is_match(path))
+    }
+
     /// Return a commit range for the given package from a [`RevspecPattern2`]
     pub fn get_commit_range_for_package(
         &self,
@@ -16,42 +92,10 @@ impl Repository {
     ) -> Result<CommitIter<'_>, Git2Error> {
         let mut commit_range = self.revwalk_pkg(pattern, Some(package))?;
         let mut commits = vec![];
-        let package = SETTINGS.packages.get(package).expect("package exists");
-        let package_path_filter = PackagePathFilter::from_package(package);
 
         for (oid_of, commit) in commit_range.into_iter() {
-            let parent = commit.parent(0).ok().map(|commit| commit.id().to_string());
-
-            let parent_tree = self.tree_to_treeish(parent.as_ref())?;
-
-            let current_tree = self
-                .tree_to_treeish(Some(&commit.id().to_string()))?
-                .expect("Failed to get commit tree");
-
-            let diff = match parent_tree {
-                None => self
-                    .0
-                    .diff_tree_to_tree(None, current_tree.as_tree(), None)?,
-                Some(parent_tree) => {
-                    self.0
-                        .diff_tree_to_tree(parent_tree.as_tree(), current_tree.as_tree(), None)?
-                }
-            };
-
-            for delta in diff.deltas() {
-                if let Some(old) = delta.old_file().path() {
-                    if package_path_filter.is_match(old) {
-                        commits.push((oid_of, commit));
-                        break;
-                    }
-                }
-
-                if let Some(new) = delta.new_file().path() {
-                    if package_path_filter.is_match(new) {
-                        commits.push((oid_of, commit));
-                        break;
-                    }
-                }
+            if self.is_commit_in_package(&commit, package)? {
+                commits.push((oid_of, commit));
             }
         }
 
@@ -65,46 +109,10 @@ impl Repository {
     ) -> Result<CommitIter<'_>, Git2Error> {
         let mut commit_range = self.revwalk(pattern)?;
         let mut commits = vec![];
-        let package_paths: Vec<_> = SETTINGS
-            .packages
-            .values()
-            .map(|package| &package.path)
-            .collect();
 
         for (oid_of, commit) in commit_range.into_iter() {
-            let parent = commit.parent(0);
-
-            // First commit is always included in monorepo global tag
-            if parent.is_err() {
+            if self.is_commit_global(&commit)? {
                 commits.push((oid_of, commit));
-                continue;
-            }
-
-            let parent = parent?.id().to_string();
-            let t1 = self
-                .tree_to_treeish(Some(&parent))?
-                .expect("Failed to get parent tree");
-
-            let t2 = self
-                .tree_to_treeish(Some(&commit.id().to_string()))?
-                .expect("Failed to get commit tree");
-
-            let diff = self.0.diff_tree_to_tree(t1.as_tree(), t2.as_tree(), None)?;
-
-            for delta in diff.deltas() {
-                if let Some(old) = delta.old_file().path() {
-                    if package_paths.iter().all(|path| !old.starts_with(path)) {
-                        commits.push((oid_of, commit));
-                        break;
-                    }
-                }
-
-                if let Some(new) = delta.new_file().path() {
-                    if package_paths.iter().all(|path| !new.starts_with(path)) {
-                        commits.push((oid_of, commit));
-                        break;
-                    }
-                }
             }
         }
 
