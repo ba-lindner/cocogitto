@@ -74,6 +74,7 @@ impl CocoGitto {
             .map_err(Into::into)
     }
 
+    #[deprecated = "use CocoGitto::get_changelog instead"]
     pub fn get_changelog_at_tag(&self, tag: &str, template: Template) -> Result<String> {
         let changelog = self.get_changelog(tag, false)?;
 

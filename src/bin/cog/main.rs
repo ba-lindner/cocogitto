@@ -644,21 +644,17 @@ fn main() -> Result<()> {
             let template = if let Some(template) = template {
                 Template::from_arg(template, context)?
             } else {
+                // fallback never uses remote context
                 Template::fallback(unified)
             };
 
-            // TODO: fallback to tag here
+            let pattern = at.or(pattern);
             let pattern = pattern.as_deref().unwrap_or("..");
-            let result = match at {
-                Some(at) => cocogitto.get_changelog_at_tag(&at, template)?,
-                None => {
-                    if !SETTINGS.packages.is_empty() {
-                        cocogitto.get_monorepo_changelog(pattern, template, unified)?
-                    } else {
-                        let changelog = cocogitto.get_changelog(pattern, true)?;
-                        changelog.into_markdown(template, ReleaseType::Standard)?
-                    }
-                }
+            let result = if !SETTINGS.packages.is_empty() {
+                cocogitto.get_monorepo_changelog(pattern, template, unified)?
+            } else {
+                let changelog = cocogitto.get_changelog(pattern, true)?;
+                changelog.into_markdown(template, ReleaseType::Standard)?
             };
             println!("{result}");
         }
