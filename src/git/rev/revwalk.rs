@@ -3,6 +3,7 @@ use git2::Commit;
 use crate::git::error::Git2Error;
 use crate::git::oid::OidOf;
 use crate::git::repository::Repository;
+use crate::git::rev::revspec::RevSpecPattern2;
 use crate::git::rev::CommitIter;
 
 impl Repository {
@@ -12,7 +13,7 @@ impl Repository {
         pattern: &str,
         package: &str,
     ) -> Result<CommitIter<'_>, Git2Error> {
-        let mut commit_range = self.revwalk_pkg(pattern, Some(package))?;
+        let mut commit_range = self.revwalk_pkg(self.revspec_from_str(pattern)?, Some(package))?;
         let mut commits = vec![];
 
         for (oid_of, commit) in commit_range.into_iter() {
@@ -44,25 +45,23 @@ impl Repository {
 
     /// Return a commit range from a [`RevspecPattern2`]
     pub fn revwalk(&self, spec: &str) -> Result<CommitIter<'_>, Git2Error> {
-        self.revwalk_pkg(spec, None)
+        self.revwalk_pkg(self.revspec_from_str(spec)?, None)
     }
 
     pub fn revwalk_pkg(
         &self,
-        spec: &str,
+        spec: RevSpecPattern2,
         package: Option<&str>,
     ) -> Result<CommitIter<'_>, Git2Error> {
-        let spec = self.revspec_from_str(spec)?;
-
-        if spec.from() == spec.to() {
-            let oid = *spec.from();
-            let oid_of = self.resolve_oid_of(&oid.to_string())?;
-            let commit = self.0.find_commit(oid)?;
-            return Ok(CommitIter::single(oid_of, commit));
-        }
-
         let mut revwalk = self.0.revwalk()?;
-        revwalk.push_range(&spec.to_string())?;
+        if let Some(to) = spec.to {
+            revwalk.push(to)?;
+        } else {
+            revwalk.push_head()?;
+        }
+        if let Some(from) = spec.from {
+            revwalk.hide(from)?;
+        }
 
         let mut commits: Vec<(OidOf, Commit)> = vec![];
 
@@ -72,18 +71,6 @@ impl Repository {
             let oid_of = self.resolve_oid_of_package(&oid.to_string(), package)?;
             let commit = self.0.find_commit(oid)?;
             commits.push((oid_of, commit));
-        }
-
-        // TODO: can we avoid allocating strings here ?
-        let first_oid = self.resolve_oid_of_package(&spec.from().to_string(), package)?;
-        let include_start = match &first_oid {
-            OidOf::Head(_) | OidOf::FirstCommit(_) => true,
-            OidOf::Tag(_) | OidOf::Other(_) => false,
-        };
-
-        if include_start {
-            let first_commit = self.0.find_commit(*spec.from())?;
-            commits.push((first_oid, first_commit));
         }
 
         Ok(CommitIter(commits))

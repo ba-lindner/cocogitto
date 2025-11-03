@@ -4,6 +4,7 @@ use semver::{BuildMetadata, Prerelease, Version};
 use crate::conventional::error::BumpError;
 use crate::conventional::version::Increment;
 use crate::git::commit::GitCommitExt;
+use crate::git::rev::revspec::RevSpecPattern2;
 use crate::git::tag::TagLookUpOptions;
 use crate::{Commit, IncrementCommand, Repository, Tag};
 
@@ -126,12 +127,13 @@ impl Tag {
     }
 
     fn get_version_from_commit_history(&self, repository: &Repository) -> Result<Tag, BumpError> {
-        let changelog_start_oid = repository
-            .get_latest_tag_oid(TagLookUpOptions::default())
-            .ok()
-            .unwrap_or_else(|| repository.get_first_commit().expect("non empty repository"));
-
-        let commits = repository.revwalk(&format!("{changelog_start_oid}.."))?;
+        let commits = repository.revwalk_pkg(
+            RevSpecPattern2 {
+                from: self.oid,
+                to: None,
+            },
+            None,
+        )?;
 
         let commits: Vec<&Git2Commit> = commits
             .iter_commits()
