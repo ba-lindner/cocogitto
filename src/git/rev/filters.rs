@@ -139,3 +139,27 @@ impl Repository {
         Self::check_diff_paths(diff, |path| filter.is_match(path))
     }
 }
+
+pub(crate) enum CommitFilter<'p> {
+    /// no filtering
+    #[allow(dead_code, reason = "will be used later on")]
+    Standard,
+    /// global commits only
+    Global,
+    /// package specific commits only
+    Package(&'p str),
+}
+
+impl CommitFilter<'_> {
+    pub(crate) fn matches(
+        &self,
+        repository: &Repository,
+        commit: &Commit<'_>,
+    ) -> Result<bool, Git2Error> {
+        match self {
+            CommitFilter::Standard => Ok(true),
+            CommitFilter::Global => repository.is_commit_global(commit),
+            CommitFilter::Package(package) => repository.is_commit_in_package(commit, package),
+        }
+    }
+}

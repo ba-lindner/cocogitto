@@ -3,6 +3,7 @@ use git2::Commit;
 use crate::git::error::Git2Error;
 use crate::git::oid::OidOf;
 use crate::git::repository::Repository;
+use crate::git::rev::filters::CommitFilter;
 use crate::git::rev::revspec::RevSpecPattern2;
 use crate::git::rev::CommitIter;
 
@@ -14,15 +15,7 @@ impl Repository {
         package: &str,
     ) -> Result<CommitIter<'_>, Git2Error> {
         let mut commit_range = self.revwalk_pkg(self.revspec_from_str(pattern)?, Some(package))?;
-        let mut commits = vec![];
-
-        for (oid_of, commit) in commit_range.into_iter() {
-            if self.is_commit_in_package(&commit, package)? {
-                commits.push((oid_of, commit));
-            }
-        }
-
-        commit_range = CommitIter(commits);
+        commit_range.apply_filter(self, CommitFilter::Package(package))?;
         Ok(commit_range)
     }
 
@@ -31,15 +24,7 @@ impl Repository {
         pattern: &str,
     ) -> Result<CommitIter<'_>, Git2Error> {
         let mut commit_range = self.revwalk(pattern)?;
-        let mut commits = vec![];
-
-        for (oid_of, commit) in commit_range.into_iter() {
-            if self.is_commit_global(&commit)? {
-                commits.push((oid_of, commit));
-            }
-        }
-
-        commit_range = CommitIter(commits);
+        commit_range.apply_filter(self, CommitFilter::Global)?;
         Ok(commit_range)
     }
 
