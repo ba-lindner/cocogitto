@@ -5,9 +5,7 @@ use std::{
 };
 
 use crate::git::error::Git2Error;
-use git2::{
-    Commit as Git2Commit, IndexAddOption, Object, ObjectType, Oid, Repository as Git2Repository,
-};
+use git2::{Commit as Git2Commit, IndexAddOption, Oid, Repository as Git2Repository};
 
 pub(crate) struct Repository(pub(crate) Git2Repository);
 
@@ -131,19 +129,6 @@ impl Repository {
             .name()
             .map(|name| name.to_string())
             .ok_or(Git2Error::CommitterNotFound)
-    }
-
-    pub(crate) fn tree_to_treeish(
-        &self,
-        arg: Option<&String>,
-    ) -> Result<Option<Object<'_>>, git2::Error> {
-        let arg = match arg {
-            Some(s) => s,
-            None => return Ok(None),
-        };
-        let obj = self.0.revparse_single(arg)?;
-        let tree = obj.peel(ObjectType::Tree)?;
-        Ok(Some(tree))
     }
 }
 
