@@ -1109,6 +1109,76 @@ fn unified_changelog() -> Result<()> {
 }
 
 #[sealed_test]
+fn unified_changelog_with_packages() -> Result<()> {
+    // Arrange
+    let crate_dir = env!("CARGO_MANIFEST_DIR");
+    let template = PathBuf::from(crate_dir).join("tests/cog_tests/template2.tera");
+
+    git_init()?;
+    let today = Utc::now().date_naive();
+    let cog = indoc!(
+        r#"
+        [packages]
+        a = { path = "a" }
+        b = { path = "b" }
+        "#
+    );
+    git_add(cog, "cog.toml")?;
+    let sha_1 = git_commit_short("chore: init")?;
+    git_add(".", "a/feat")?;
+    let sha_2 = git_commit_short("feat(a): implement a")?;
+    git_add(".", "b/feat")?;
+    let sha_3 = git_commit_short("feat(b): implement b")?;
+    git_add(".", "a/fix")?;
+    git_add(".", "b/fix")?;
+    let sha_4 = git_commit_short("fix: everything")?;
+    git_tag("1.0.0")?;
+    git_tag("a-1.0.0")?;
+    git_tag("b-1.0.0")?;
+
+    // Act
+    let result = Command::cargo_bin("cog")?
+        .arg("changelog")
+        .arg("--unified")
+        .arg("--template")
+        .arg(template)
+        // Assert
+        .assert()
+        .success();
+
+    let changelog = String::from_utf8_lossy(&result.get_output().stdout);
+
+    assert_eq!(
+        changelog,
+        formatdoc! {
+            r#"
+            ## 1.0.0 - {today}
+            ### Package updates
+            - a bumped to a-1.0.0
+            - b bumped to b-1.0.0
+            ### All changes
+            #### Features
+            - (**a**) implement a - ({sha_2}) - Tom (packages: [a])
+            - (**b**) implement b - ({sha_3}) - Tom (packages: [b])
+            #### Bug Fixes
+            - everything - ({sha_4}) - Tom (packages: [a, b])
+            #### Miscellaneous Chores
+            - init - ({sha_1}) - Tom (packages: [global])
+
+
+            "#,
+            today = today,
+            sha_1 = sha_1,
+            sha_2 = sha_2,
+            sha_3 = sha_3,
+            sha_4 = sha_4,
+        }
+    );
+
+    Ok(())
+}
+
+#[sealed_test]
 fn monorepo_changelog_default_template() -> Result<()> {
     // Arrange
     git_init()?;

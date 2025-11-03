@@ -56,6 +56,7 @@ impl Serialize for ChangelogCommit<'_> {
             &self.commit.conventional.is_breaking_change,
         )?;
         commit.serialize_field("footer", footers)?;
+        commit.serialize_field("packages", &self.packages)?;
         commit.end()
     }
 }
@@ -125,6 +126,7 @@ mod test {
                 author: "Jean Michel Doudou".to_string(),
                 date: Utc::now().naive_utc(),
             },
+            packages: vec!["global".to_string()],
         };
 
         let result = serde_json::to_string(&commit);

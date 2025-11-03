@@ -1,6 +1,14 @@
-use crate::settings::MonoRepoPackage;
-use globset::{Candidate, GlobBuilder, GlobSet, GlobSetBuilder};
+use std::collections::HashMap;
 use std::path::Path;
+
+use git2::{Commit, Diff};
+use globset::{Candidate, GlobBuilder, GlobSet, GlobSetBuilder};
+use once_cell::sync::Lazy;
+
+use crate::git::error::Git2Error;
+use crate::git::repository::Repository;
+use crate::settings::MonoRepoPackage;
+use crate::SETTINGS;
 
 #[derive(Debug)]
 pub(crate) struct PackagePathFilter {
@@ -9,7 +17,7 @@ pub(crate) struct PackagePathFilter {
 }
 
 impl PackagePathFilter {
-    pub(super) fn from_package(package: &MonoRepoPackage) -> Self {
+    fn from_package(package: &MonoRepoPackage) -> Self {
         Self::new(
             package.path.to_str().expect("valid package path"),
             &package.include,
@@ -17,7 +25,7 @@ impl PackagePathFilter {
         )
     }
 
-    pub(super) fn is_match<P: AsRef<Path> + ?Sized>(&self, path: &P) -> bool {
+    fn is_match<P: AsRef<Path> + ?Sized>(&self, path: &P) -> bool {
         let candidate = Candidate::new(path);
         self.include.is_match_candidate(&candidate) && !self.exclude.is_match_candidate(&candidate)
     }
@@ -55,5 +63,79 @@ impl PackagePathFilter {
         };
 
         PackagePathFilter { include, exclude }
+    }
+}
+
+static PATH_FILTER: Lazy<HashMap<String, PackagePathFilter>> = Lazy::new(|| {
+    SETTINGS
+        .packages
+        .iter()
+        .map(|(name, package)| (name.clone(), PackagePathFilter::from_package(package)))
+        .collect()
+});
+
+impl Repository {
+    pub fn is_commit_global(&self, commit: &Commit<'_>) -> Result<bool, Git2Error> {
+        if commit.parent(0).is_err() {
+            return Ok(true);
+        }
+        Ok(Self::is_diff_global(&self.get_commit_diff(commit)?))
+    }
+
+    pub fn is_commit_in_package(
+        &self,
+        commit: &Commit<'_>,
+        package: &str,
+    ) -> Result<bool, Git2Error> {
+        Ok(Self::is_diff_in_package(
+            &self.get_commit_diff(commit)?,
+            package,
+        ))
+    }
+
+    pub fn packages_for_commit(&self, commit: &Commit<'_>) -> Result<Vec<String>, Git2Error> {
+        let mut packages = Vec::new();
+        let diff = self.get_commit_diff(commit)?;
+        for package in PATH_FILTER.keys() {
+            if Self::is_diff_in_package(&diff, package) {
+                packages.push(package.clone());
+            }
+        }
+        packages.sort();
+        if commit.parent(0).is_err() || Self::is_diff_global(&diff) {
+            packages.push("global".to_string());
+        }
+        Ok(packages)
+    }
+
+    fn get_commit_diff(&'_ self, commit: &Commit<'_>) -> Result<Diff<'_>, Git2Error> {
+        let parent = commit
+            .parent(0)
+            .ok()
+            .map(|commit| commit.tree())
+            .transpose()?;
+        let current = commit.tree()?;
+        self.0
+            .diff_tree_to_tree(parent.as_ref(), Some(&current), None)
+            .map_err(Into::into)
+    }
+
+    fn check_diff_paths(diff: &Diff, predicate: impl Fn(&Path) -> bool) -> bool {
+        diff.deltas().any(|delta| {
+            delta.old_file().path().is_some_and(&predicate)
+                || delta.new_file().path().is_some_and(&predicate)
+        })
+    }
+
+    fn is_diff_global(diff: &Diff) -> bool {
+        let filter = &*PATH_FILTER;
+        Self::check_diff_paths(diff, |path| {
+            filter.values().all(|filter| !filter.is_match(path))
+        })
+    }
+
+    fn is_diff_in_package(diff: &Diff, package: &str) -> bool {
+        let filter = PATH_FILTER.get(package).expect("invalid package");
+        Self::check_diff_paths(diff, |path| filter.is_match(path))
     }
 }

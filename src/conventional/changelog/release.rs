@@ -4,6 +4,7 @@ use serde::Serialize;
 
 use crate::conventional::commit::Commit;
 use crate::git::oid::OidOf;
+use crate::git::repository::Repository;
 use crate::git::rev::CommitIter;
 use crate::{settings, SETTINGS};
 use colored::Colorize;
@@ -18,6 +19,91 @@ pub struct Release<'a> {
     pub date: NaiveDateTime,
     pub commits: Vec<ChangelogCommit<'a>>,
     pub previous: Option<Box<Release<'a>>>,
+}
+
+impl Repository {
+    // to be refactored
+    pub fn build_unified_release(
+        &self,
+        commits: CommitIter<'_>,
+    ) -> Result<Release<'_>, ChangelogError> {
+        let mut releases = vec![];
+        let mut commit_iter = commits.into_iter().rev().peekable();
+
+        while let Some((_oid, _commit)) = commit_iter.peek() {
+            let mut release_commits = vec![];
+
+            for (oid, commit) in commit_iter.by_ref() {
+                if matches!(oid, OidOf::Tag(_)) {
+                    release_commits.push((oid, commit));
+                    break;
+                }
+                release_commits.push((oid, commit));
+            }
+
+            release_commits.reverse();
+            releases.push(release_commits);
+        }
+
+        let mut current = None;
+
+        for release in releases {
+            let next = Release {
+                version: release.first().unwrap().0.clone(),
+                from: current
+                    .as_ref()
+                    .map(|current: &Release| current.version.clone())
+                    .unwrap_or(release.last().unwrap().0.clone()),
+                date: Utc::now().naive_local(),
+                commits: release
+                    .iter()
+                    .filter(|(_commit, commit)| commit.message().is_some())
+                    .filter(|(_commit, commit)| {
+                        if SETTINGS.ignore_merge_commits {
+                            !commit.message().unwrap().starts_with("Merge")
+                        } else {
+                            true
+                        }
+                    })
+                    .filter(|(_commit, commit)| {
+                        if SETTINGS.ignore_fixup_commits {
+                            !commit.message().unwrap().starts_with("fixup!")
+                                && !commit.message().unwrap().starts_with("squash!")
+                                && !commit.message().unwrap().starts_with("amend!")
+                        } else {
+                            true
+                        }
+                    })
+                    .filter_map(
+                        |(_, git2commit)| match Commit::from_git_commit(git2commit) {
+                            Ok(commit) => {
+                                if !commit.should_omit() {
+                                    let mut ch_commit = ChangelogCommit::from(commit);
+                                    ch_commit.packages = self
+                                        .packages_for_commit(git2commit)
+                                        .inspect_err(|err| warn!("{err}"))
+                                        .ok()?;
+                                    Some(ch_commit)
+                                } else {
+                                    None
+                                }
+                            }
+                            Err(err) => {
+                                let err = err.to_string().red();
+                                warn!("{}", err);
+                                None
+                            }
+                        },
+                    )
+                    .collect(),
+                previous: current.map(Box::new),
+            };
+
+            current = Some(next);
+        }
+
+        current.ok_or(ChangelogError::EmptyRelease)
+    }
 }
 
 impl TryFrom<CommitIter<'_>> for Release<'_> {
@@ -100,6 +186,7 @@ impl TryFrom<CommitIter<'_>> for Release<'_> {
 pub struct ChangelogCommit<'a> {
     pub author_username: Option<&'a str>,
     pub commit: Commit,
+    pub packages: Vec<String>,
 }
 
 impl From<Commit> for ChangelogCommit<'_> {
@@ -109,6 +196,7 @@ impl From<Commit> for ChangelogCommit<'_> {
         ChangelogCommit {
             author_username,
             commit,
+            packages: Vec::new(),
         }
     }
 }
@@ -691,6 +779,7 @@ mod test {
                             author: paul_delafosse.to_string(),
                             date,
                         },
+                        packages: vec!["parser".to_string()],
                     },
                     ChangelogCommit {
                         author_username: None,
@@ -711,6 +800,7 @@ mod test {
                             author: paul_delafosse.to_string(),
                             date,
                         },
+                        packages: vec!["global".to_string()],
                     },
                     ChangelogCommit {
                         author_username: Some("oknozor"),
@@ -731,6 +821,7 @@ mod test {
                             author: "James Delleck".to_string(),
                             date,
                         },
+                        packages: vec!["global".to_string(), "parser".to_string()],
                     },
                 ],
                 previous: None,
