@@ -2,7 +2,6 @@ use crate::conventional::commit::Commit;
 use crate::error::CogCheckReport;
 
 use crate::git::commit::GitCommitExt;
-use crate::git::tag::TagLookUpOptions;
 use crate::CocoGitto;
 use anyhow::anyhow;
 use anyhow::Result;
@@ -20,9 +19,7 @@ impl CocoGitto {
         let commit_range = if let Some(range) = range {
             self.repository.revwalk(&range)?
         } else if check_from_latest_tag {
-            let tag = self
-                .repository
-                .get_latest_tag(TagLookUpOptions::default())?;
+            let tag = self.repository.get_latest_tag(None, false)?;
             self.repository.revwalk(&format!("{tag}.."))?
         } else {
             self.repository.revwalk("..")?

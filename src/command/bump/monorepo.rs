@@ -8,7 +8,7 @@ use crate::conventional::changelog::ReleaseType;
 use crate::conventional::version::{Increment, IncrementCommand};
 
 use crate::git::error::TagError;
-use crate::git::tag::{Tag, TagLookUpOptions};
+use crate::git::tag::Tag;
 use crate::hook::HookVersion;
 use crate::settings::MonoRepoPackage;
 use crate::{settings, CocoGitto, SETTINGS};
@@ -208,7 +208,7 @@ impl CocoGitto {
 
         let current = self
             .repository
-            .get_latest_tag(TagLookUpOptions::default())
+            .get_latest_tag(None, false)
             .map(HookVersion::new)
             .ok();
         let next_version = HookVersion::new(tag.clone());
@@ -340,7 +340,7 @@ impl CocoGitto {
 
         let current = self
             .repository
-            .get_latest_tag(TagLookUpOptions::default())
+            .get_latest_tag(None, false)
             .map(HookVersion::new)
             .ok();
         let next_version = HookVersion::new(tag.clone());
@@ -404,7 +404,7 @@ impl CocoGitto {
     pub fn get_current_packages(&self) -> Result<Vec<PackageData>> {
         let mut packages = vec![];
         for (package_name, package) in SETTINGS.packages.iter() {
-            let tag = match self.repository.get_latest_package_tag(package_name) {
+            let tag = match self.repository.get_latest_tag(Some(package_name), false) {
                 Ok(tag) => tag,
                 Err(TagError::NoTag) => Tag::default(),
                 Err(other) => bail!(other),
@@ -501,7 +501,7 @@ impl CocoGitto {
 
             let old_version = self
                 .repository
-                .get_latest_package_tag(package_name)
+                .get_latest_tag(Some(package_name), false)
                 .map(HookVersion::new)
                 .ok();
 
