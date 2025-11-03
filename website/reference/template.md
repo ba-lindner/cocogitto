@@ -103,6 +103,11 @@ Then use, for example:
     * **Description:** the conventional commit footers
     * **Nullable:** `false`
 
+- `packages`:
+    * **Type:** `Array<String>`
+    * **Description:** List of packages affected by commit. Only filled in [unified changelogs](/guide/changelog.html#monorepo-changelogs)
+    * **Nullable:** `false`
+
 ### GitRef
 
 - `tag`:
@@ -112,7 +117,7 @@ Then use, for example:
     * **Nullable:** `true`
 
 - `id`:
-    * **Type:** `Sting`, `SHA-1`
+    * **Type:** `String`, `SHA-1`
     * **Description:** the id of the latest commit in the release. This can be `null` only when using `cog bump`, because it
       generates a changelog before creating the target version.
     * **Nullable:** `true`
@@ -162,17 +167,17 @@ In addition to the [tera built-in filters](https://keats.github.io/tera/docs/#bu
               - {{ commit.id }} - {{ commit.summary }} - {{ author }}
       {% endfor %}
   ```
-  - `group_by_type`
-    * **Description:** group commits by their conventional commit type and sort order
-    * **Example:**
-    ```tera
-       {% for type_group in commits | group_by_type %}
-           ### {{ type_group.0 | upper_first }}
-           {% for commit in type_group.1 %}
-               - {{ commit.summary }}
-           {% endfor %}
-       {% endfor %}
-    ```
+- `group_by_type`
+  * **Description:** group commits by their conventional commit type and sort order
+  * **Example:**
+  ```tera
+      {% for type_group in commits | group_by_type %}
+          ### {{ type_group.0 | upper_first }}
+          {% for commit in type_group.1 %}
+              - {{ commit.summary }}
+          {% endfor %}
+      {% endfor %}
+  ```
 - `upper_first`
   * **Description:** capitalize the first letter of a string
   * **Example:**
