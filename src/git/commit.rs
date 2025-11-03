@@ -1,5 +1,6 @@
 use crate::git::error::Git2Error;
 use crate::git::repository::Repository;
+use crate::SETTINGS;
 use git2::{Commit, ObjectType, Oid, ResetType, Signature, Tree};
 use std::fs;
 use std::io::{Read, Write};
@@ -195,6 +196,32 @@ fn ssh_sign_string(
         .map_err(Git2Error::IOError)?;
 
     Ok(signature)
+}
+
+pub(crate) trait GitCommitExt {
+    fn is_merge_commit(&self) -> bool;
+    fn is_fixup_commit(&self) -> bool;
+
+    fn should_retain(&self, ignore_merge_commits: bool, ignore_fixup_commits: bool) -> bool {
+        !(ignore_merge_commits && self.is_merge_commit()
+            || ignore_fixup_commits && self.is_fixup_commit())
+    }
+
+    fn should_retain_by_settings(&self) -> bool {
+        self.should_retain(SETTINGS.ignore_merge_commits, SETTINGS.ignore_fixup_commits)
+    }
+}
+
+impl GitCommitExt for Commit<'_> {
+    fn is_merge_commit(&self) -> bool {
+        self.parent_count() > 1
+    }
+
+    fn is_fixup_commit(&self) -> bool {
+        self.message().is_some_and(|msg| {
+            msg.starts_with("fixup!") || msg.starts_with("squash!") || msg.starts_with("amend!")
+        })
+    }
 }
 
 #[cfg(test)]

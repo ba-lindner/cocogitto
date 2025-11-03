@@ -3,6 +3,7 @@ use conventional_commit_parser::commit::Footer;
 use serde::Serialize;
 
 use crate::conventional::commit::Commit;
+use crate::git::commit::GitCommitExt;
 use crate::git::oid::OidOf;
 use crate::git::repository::Repository;
 use crate::git::rev::CommitIter;
@@ -58,22 +59,7 @@ impl Repository {
                 commits: release
                     .iter()
                     .filter(|(_commit, commit)| commit.message().is_some())
-                    .filter(|(_commit, commit)| {
-                        if SETTINGS.ignore_merge_commits {
-                            !commit.message().unwrap().starts_with("Merge")
-                        } else {
-                            true
-                        }
-                    })
-                    .filter(|(_commit, commit)| {
-                        if SETTINGS.ignore_fixup_commits {
-                            !commit.message().unwrap().starts_with("fixup!")
-                                && !commit.message().unwrap().starts_with("squash!")
-                                && !commit.message().unwrap().starts_with("amend!")
-                        } else {
-                            true
-                        }
-                    })
+                    .filter(|(_commit, commit)| commit.should_retain_by_settings())
                     .filter_map(
                         |(_, git2commit)| match Commit::from_git_commit(git2commit) {
                             Ok(commit) => {

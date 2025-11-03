@@ -1,38 +1,11 @@
 use git2::Commit as Git2Commit;
-use once_cell::sync::Lazy;
 use semver::{BuildMetadata, Prerelease, Version};
 
 use crate::conventional::error::BumpError;
 use crate::conventional::version::Increment;
+use crate::git::commit::GitCommitExt;
 use crate::git::tag::TagLookUpOptions;
-use crate::{Commit, IncrementCommand, Repository, Tag, SETTINGS};
-
-static FILTER_MERGE_COMMITS: Lazy<fn(&&git2::Commit) -> bool> = Lazy::new(|| {
-    |commit| {
-        if SETTINGS.ignore_merge_commits {
-            commit.parent_count() <= 1
-        } else {
-            true
-        }
-    }
-});
-
-static FILTER_FIXUP_COMMITS: Lazy<fn(&&git2::Commit) -> bool> = Lazy::new(|| {
-    |commit| {
-        if SETTINGS.ignore_fixup_commits {
-            commit
-                .message()
-                .map(|msg| {
-                    !msg.starts_with("fixup!")
-                        || !msg.starts_with("squash!")
-                        || !msg.starts_with("amend!")
-                })
-                .unwrap_or(true)
-        } else {
-            true
-        }
-    }
-});
+use crate::{Commit, IncrementCommand, Repository, Tag};
 
 pub(crate) trait Bump {
     fn manual_bump(&self, version: &str) -> Result<Self, semver::Error>
@@ -162,8 +135,7 @@ impl Tag {
 
         let commits: Vec<&Git2Commit> = commits
             .iter_commits()
-            .filter(&*FILTER_MERGE_COMMITS)
-            .filter(&*FILTER_FIXUP_COMMITS)
+            .filter(|commit| commit.should_retain_by_settings())
             .collect();
 
         let conventional_commits: Vec<Commit> = commits
@@ -197,8 +169,7 @@ impl Tag {
             .get_commit_range_for_package(&format!("{changelog_start_oid}.."), package)?;
         let commits: Vec<&Git2Commit> = commits
             .iter_commits()
-            .filter(&*FILTER_MERGE_COMMITS)
-            .filter(&*FILTER_FIXUP_COMMITS)
+            .filter(|commit| commit.should_retain_by_settings())
             .collect();
 
         let conventional_commits: Vec<Commit> = commits
@@ -231,8 +202,7 @@ impl Tag {
 
         let commits: Vec<&Git2Commit> = commits
             .iter_commits()
-            .filter(&*FILTER_MERGE_COMMITS)
-            .filter(&*FILTER_FIXUP_COMMITS)
+            .filter(|commit| commit.should_retain_by_settings())
             .collect();
 
         let conventional_commits: Vec<Commit> = commits
