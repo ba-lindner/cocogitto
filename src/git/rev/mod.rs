@@ -1,6 +1,8 @@
 use git2::Commit;
 
-use crate::git::oid::CommitInfo;
+use crate::git::{
+    error::Git2Error, oid::CommitInfo, repository::Repository, rev::filters::CommitFilter,
+};
 
 pub mod cache;
 pub mod filters;
@@ -29,6 +31,23 @@ impl<'repo> CommitIter<'repo> {
 
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+
+    pub(crate) fn apply_filter(
+        &mut self,
+        repository: &Repository,
+        filter: CommitFilter,
+    ) -> Result<(), Git2Error> {
+        let to_retain = self
+            .0
+            .iter()
+            .map(|(_, commit)| filter.matches_commit(repository, commit))
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(to_retain.len(), self.0.len());
+        let mut to_retain = to_retain.into_iter();
+        self.0
+            .retain(|_| to_retain.next().expect("asserted that enough items exist"));
+        Ok(())
     }
 }
 
