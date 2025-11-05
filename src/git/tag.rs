@@ -121,11 +121,6 @@ impl Repository {
         Ok(tags.get(current_idx - 1).cloned())
     }
 
-    pub(crate) fn get_latest_tag_oid(&self, options: TagLookUpOptions) -> Result<Oid, TagError> {
-        self.get_latest_tag(options)
-            .map(|tag| tag.oid_unchecked().to_owned())
-    }
-
     pub fn tag_lookup(&self, option: TagLookUpOptions) -> Result<Vec<Tag>, TagError> {
         let prefix = SETTINGS.tag_prefix.as_ref();
         let include_pre_release = option.include_pre_release;
@@ -583,37 +578,6 @@ mod test {
 
         // Act
         let tag = repo.get_latest_tag(TagLookUpOptions::default());
-
-        // Assert
-        assert_that!(tag).is_err();
-        Ok(())
-    }
-
-    #[sealed_test]
-    fn get_latest_tag_oid_ok() -> Result<()> {
-        // Arrange
-        let repo = git_init_no_gpg()?;
-        run_cmd!(
-            git commit --allow-empty -m "first commit";
-            git tag 0.1.0;
-        )?;
-
-        // Act
-        let tag = repo.get_latest_tag_oid(TagLookUpOptions::default());
-
-        // Assert
-        assert_that!(tag).is_ok();
-        Ok(())
-    }
-
-    #[sealed_test]
-    fn get_latest_tag_oid_err() -> Result<()> {
-        // Arrange
-        let repo = git_init_no_gpg()?;
-        run_cmd!(git commit --allow-empty -m "first commit")?;
-
-        // Act
-        let tag = repo.get_latest_tag_oid(TagLookUpOptions::default());
 
         // Assert
         assert_that!(tag).is_err();

@@ -125,7 +125,6 @@ impl Repository {
 
 pub(crate) enum CommitFilter<'p> {
     /// no filtering
-    #[allow(dead_code, reason = "will be used later on")]
     Standard,
     /// global commits only
     Global,

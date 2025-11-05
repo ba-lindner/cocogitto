@@ -14,18 +14,16 @@ impl Repository {
         pattern: RevSpecPattern2,
         package: &str,
     ) -> Result<CommitIter<'_>, Git2Error> {
-        let mut commit_range = self.revwalk(pattern)?;
-        commit_range.apply_filter(self, CommitFilter::Package(package))?;
-        Ok(commit_range)
+        self.revwalk(pattern)?
+            .apply_filter(self, CommitFilter::Package(package))
     }
 
     pub fn get_commit_range_for_monorepo_global(
         &self,
         pattern: RevSpecPattern2,
     ) -> Result<CommitIter<'_>, Git2Error> {
-        let mut commit_range = self.revwalk(pattern)?;
-        commit_range.apply_filter(self, CommitFilter::Global)?;
-        Ok(commit_range)
+        self.revwalk(pattern)?
+            .apply_filter(self, CommitFilter::Global)
     }
 
     /// Return a commit range from a [`RevSpecPattern2`]

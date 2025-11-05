@@ -34,10 +34,10 @@ impl<'repo> CommitIter<'repo> {
     }
 
     pub(crate) fn apply_filter(
-        &mut self,
+        mut self,
         repository: &Repository,
         filter: CommitFilter,
-    ) -> Result<(), Git2Error> {
+    ) -> Result<Self, Git2Error> {
         let to_retain = self
             .0
             .iter()
@@ -47,7 +47,7 @@ impl<'repo> CommitIter<'repo> {
         let mut to_retain = to_retain.into_iter();
         self.0
             .retain(|_| to_retain.next().expect("asserted that enough items exist"));
-        Ok(())
+        Ok(self)
     }
 }
 
