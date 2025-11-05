@@ -84,10 +84,6 @@ impl RepoCache {
             .cloned()
             .unwrap_or(CommitInfo::new(oid))
     }
-
-    pub fn head_commit_info(&self) -> CommitInfo {
-        self.commits[&self.head].clone()
-    }
 }
 
 impl Repository {
