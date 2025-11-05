@@ -1,7 +1,7 @@
 use crate::conventional::changelog::release::Release;
 use crate::conventional::commit::Commit;
 use crate::git::error::TagError;
-use crate::git::oid::OidOf;
+use crate::git::oid::ReleaseVersion;
 
 use crate::conventional::error::BumpError as ConvBumpError;
 use crate::conventional::version::IncrementCommand;
@@ -297,7 +297,7 @@ impl CocoGitto {
     ) -> Result<Release<'_>> {
         let commit_range = self.repository.revwalk(pattern)?;
         let mut release = Release::try_from(commit_range)?;
-        release.version = OidOf::Tag(tag);
+        release.version = tag.into();
         Ok(release)
     }
 
@@ -312,8 +312,8 @@ impl CocoGitto {
             .repository
             .get_commit_range_for_package(pattern, package)?;
 
-        let mut release = Release::try_from(commit_range)?;
-        release.version = OidOf::Tag(tag);
+        let mut release = Release::build_package(commit_range, package)?;
+        release.version = tag.into();
         Ok(release)
     }
 
@@ -321,7 +321,7 @@ impl CocoGitto {
     pub fn get_monorepo_global_changelog_for_version(
         &self,
         pattern: &str,
-        from: OidOf,
+        from: ReleaseVersion,
         tag: Tag,
     ) -> Result<Release<'_>> {
         let commit_range = self
@@ -330,11 +330,11 @@ impl CocoGitto {
 
         let release = match Release::try_from(commit_range) {
             Ok(mut release) => {
-                release.version = OidOf::Tag(tag);
+                release.version = tag.into();
                 release
             }
             Err(_) => Release {
-                version: OidOf::Tag(tag),
+                version: tag.into(),
                 from,
                 date: Default::default(),
                 commits: vec![],
