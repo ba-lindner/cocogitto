@@ -41,9 +41,9 @@ impl CocoGitto {
                 continue;
             }
 
-            let from = Some(range.from_oid());
+            let from = Some(range.from_oid().into_release_version(Some(package_name)));
 
-            let version = range.to_oid();
+            let version = range.to_oid().into_release_version(Some(package_name));
 
             let context = PackageBumpContext {
                 package_name,
@@ -59,15 +59,14 @@ impl CocoGitto {
             packages,
         };
 
-        let changelog = if unified {
-            self.repository
-                .build_unified_release(self.repository.revwalk(pattern)?)?
+        let range = if unified {
+            self.repository.revwalk(pattern)?
         } else {
-            Release::try_from(
-                self.repository
-                    .get_commit_range_for_monorepo_global(pattern)?,
-            )?
+            self.repository
+                .get_commit_range_for_monorepo_global(pattern)?
         };
+
+        let changelog = self.repository.build_release(range, None, unified)?;
 
         changelog
             .into_markdown(template, ReleaseType::MonoRepo(context))

@@ -3,7 +3,7 @@ use crate::SETTINGS;
 
 use serde::Serialize;
 
-use crate::git::oid::OidOf;
+use crate::git::oid::ReleaseVersion;
 use std::io;
 use std::path::PathBuf;
 use tera::Context;
@@ -170,8 +170,8 @@ pub struct MonoRepoContext<'a> {
 pub struct PackageBumpContext<'a> {
     pub package_name: &'a str,
     pub package_path: &'a str,
-    pub version: OidOf,
-    pub from: Option<OidOf>,
+    pub version: ReleaseVersion,
+    pub from: Option<ReleaseVersion>,
 }
 
 #[derive(Debug)]
