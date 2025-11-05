@@ -61,6 +61,7 @@ mod test {
 
     use cmd_lib::run_cmd;
     use git2::Oid;
+    use indoc::formatdoc;
     use sealed_test::prelude::*;
     use speculoos::prelude::*;
 
@@ -70,7 +71,7 @@ mod test {
     use crate::git::repository::Repository;
     use crate::git::rev::revspec::RevSpecPattern2;
     use crate::git::rev::CommitIter;
-    use crate::git::tag::{Tag, TagLookUpOptions};
+    use crate::git::tag::Tag;
     use crate::settings::{MonoRepoPackage, Settings};
     use crate::test_helpers::{commit, git_init_no_gpg, git_tag, mkdir};
 
@@ -445,7 +446,7 @@ mod test {
         let head = repo.get_head_commit_oid()?;
         let mut head = CommitInfo::new(head);
         head.head = true;
-        let tag = repo.get_latest_tag(TagLookUpOptions::default())?;
+        let tag = repo.get_latest_tag(None, false)?;
 
         // Cover the case when we release a version and run the test in the CI right after that
         let head = if tag.oid == Some(head.oid) {
@@ -494,7 +495,7 @@ mod test {
         let repo = Repository::open(COCOGITTO_REPOSITORY)?;
         let mut tag_count = repo.0.tag_names(None)?.len();
         let head = repo.get_head_commit_oid()?;
-        let latest = repo.get_latest_tag(TagLookUpOptions::default())?;
+        let latest = repo.get_latest_tag(None, false)?;
         if latest.oid == Some(head) {
             tag_count -= 1;
         };
@@ -581,6 +582,53 @@ mod test {
 
         assert_that!(head_to_v1).is_equal_to(vec![three]);
         assert_that!(commit_before_v1).is_equal_to(vec![two, one]);
+
+        Ok(())
+    }
+
+    #[sealed_test]
+    fn get_repo_packages() -> Result<()> {
+        // Arrange
+        let settings = formatdoc!(
+            "
+            [packages.one]
+            path = \"one\"
+            changelog_path = \"one/CHANGELOG.md\"
+
+            [packages.two]
+            path = \"two\"
+            changelog_path = \"two/CHANGELOG.md\"
+            "
+        );
+
+        let repo = git_init_no_gpg()?;
+        run_cmd!(
+            echo $settings > cog.toml;
+            git add .;
+        )?;
+
+        repo.commit("chore: init", false, false)?;
+
+        mkdir(&["one", "two"])?;
+
+        run_cmd!(
+            echo "one" > one/file;
+            git add .;
+            git commit -m "feat: package one";
+            echo "two" > two/file;
+            git add .;
+            git commit -m "feat: package two";
+            echo "two" > two/file2;
+            git add .;
+            git commit -m "feat: more changes to two";
+        )?;
+
+        // Act
+        let range = repo.get_commit_range_for_package(RevSpecPattern2::full(), "two")?;
+        let range = range.into_iter().collect::<Vec<_>>();
+
+        // Assert
+        assert_that!(range).has_length(2);
 
         Ok(())
     }

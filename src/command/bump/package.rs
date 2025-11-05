@@ -54,7 +54,7 @@ impl CocoGitto {
 
         let current = self
             .repository
-            .get_latest_package_tag(opts.package_name)
+            .get_latest_tag(Some(opts.package_name), false)
             .map(HookVersion::new)
             .ok();
 

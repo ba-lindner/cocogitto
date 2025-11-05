@@ -49,7 +49,7 @@ impl Repository {
 
             Ok(RevSpecPattern2 { from, to })
         } else if let Ok(tag) = Tag::from_str(s, None) {
-            let previous = self.get_previous_tag(&tag)?.and_then(|tag| tag.oid);
+            let previous = self.get_previous_tag(&tag).and_then(|tag| tag.oid);
 
             Ok(RevSpecPattern2 {
                 from: previous,

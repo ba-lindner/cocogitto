@@ -1,7 +1,6 @@
 use crate::conventional::commit::{verify, Commit};
 
 use crate::git::rev::revspec::RevSpecPattern2;
-use crate::git::tag::TagLookUpOptions;
 use crate::{CocoGitto, SETTINGS};
 use anyhow::{anyhow, Result};
 use colored::*;
@@ -15,9 +14,7 @@ use tempfile::TempDir;
 impl CocoGitto {
     pub fn check_and_edit(&self, from_latest_tag: bool) -> Result<()> {
         let pattern = if from_latest_tag {
-            let tag = self
-                .repository
-                .get_latest_tag(TagLookUpOptions::default())?;
+            let tag = self.repository.get_latest_tag(None, false)?;
             RevSpecPattern2::from(tag.oid.expect("latest tag should have oid"))
         } else {
             RevSpecPattern2::full()

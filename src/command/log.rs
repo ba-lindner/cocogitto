@@ -1,6 +1,5 @@
 use crate::conventional::commit::Commit;
 use crate::git::rev::revspec::RevSpecPattern2;
-use crate::git::tag::TagLookUpOptions;
 use crate::log::filter::CommitFilters;
 use crate::CocoGitto;
 use anyhow::Result;
@@ -39,10 +38,7 @@ impl CocoGitto {
             write!(&mut repo_tag_name, " on {branch_shorthand}").unwrap();
         }
 
-        if let Ok(latest_tag) = self
-            .repository
-            .get_latest_tag(TagLookUpOptions::default().include_pre_release())
-        {
+        if let Ok(latest_tag) = self.repository.get_latest_tag(None, true) {
             write!(&mut repo_tag_name, " {latest_tag}").unwrap();
         };
 
