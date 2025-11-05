@@ -1,6 +1,7 @@
 use crate::conventional::commit::Commit;
 use crate::error::CogCheckReport;
 
+use crate::git::commit::GitCommitExt;
 use crate::git::rev::revspec::RevSpecPattern2;
 use crate::git::tag::TagLookUpOptions;
 use crate::CocoGitto;
@@ -29,26 +30,9 @@ impl CocoGitto {
         };
         let commit_range = self.repository.revwalk(pattern)?;
 
-        let ignore_merge_commit_fn = |commit: &git2::Commit| commit.parent_count() <= 1;
-        let ignore_fixup_commit_fn = |commit: &git2::Commit| {
-            !commit.message().unwrap().starts_with("fixup!")
-                && !commit.message().unwrap().starts_with("squash!")
-                && !commit.message().unwrap().starts_with("amend!")
-        };
-
         let errors: Vec<_> = commit_range
             .iter_commits()
-            .filter(|commit| {
-                if ignore_merge_commits && ignore_fixup_commits {
-                    ignore_merge_commit_fn(commit) && ignore_fixup_commit_fn(commit)
-                } else if ignore_fixup_commits {
-                    ignore_fixup_commit_fn(commit)
-                } else if ignore_merge_commits {
-                    ignore_merge_commit_fn(commit)
-                } else {
-                    true
-                }
-            })
+            .filter(|commit| commit.should_retain(ignore_merge_commits, ignore_fixup_commits))
             .map(Commit::from_git_commit)
             .filter_map(Result::err)
             .collect();
