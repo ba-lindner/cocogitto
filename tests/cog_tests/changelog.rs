@@ -1160,3 +1160,75 @@ fn monorepo_changelog_default_template() -> Result<()> {
 
     Ok(())
 }
+
+#[sealed_test]
+fn tags_on_branches() -> Result<()> {
+    // https://github.com/cocogitto/cocogitto/issues/504
+    let today = Utc::now().date_naive();
+
+    // Arrange
+    git_init()?;
+    git_add("ignore_merge_commits = true", "cog.toml")?;
+    let sha_1 = git_commit_short("chore: init")?;
+    let sha_2 = git_commit_short("feat: basic functionality")?;
+    run_cmd!(
+        git switch -c dev;
+    )?;
+    let sha_3 = git_commit_short("feat: add stuff")?;
+    let sha_4 = git_commit_short("fix: fix new stuff")?;
+    run_cmd!(
+        git tag 1.0.0;
+        git switch master;
+    )?;
+    let sha_5 = git_commit_short("docs: add README")?;
+    let sha_6 = git_commit_short("chore: thanks clippy")?;
+    let sha_7 = run_fun!(
+        git merge dev;
+        git log --format=%h -n 1;
+    )?;
+
+    // Act
+    let result = Command::cargo_bin("cog")?
+        .arg("changelog")
+        // Assert
+        .assert()
+        .success();
+
+    let changelog = String::from_utf8_lossy(&result.get_output().stdout);
+
+    assert_eq!(
+        changelog,
+        formatdoc! {
+            r#"
+            ## Unreleased ({sha_5}..{sha_7})
+            #### Documentation
+            - add README - ({sha_5}) - Tom
+            #### Miscellaneous Chores
+            - thanks clippy - ({sha_6}) - Tom
+
+            - - -
+
+            ## 1.0.0 - {today}
+            #### Features
+            - add stuff - ({sha_3}) - Tom
+            - basic functionality - ({sha_2}) - Tom
+            #### Bug Fixes
+            - fix new stuff - ({sha_4}) - Tom
+            #### Miscellaneous Chores
+            - init - ({sha_1}) - Tom
+
+
+            "#,
+            today = today,
+            sha_1 = sha_1,
+            sha_2 = sha_2,
+            sha_3 = sha_3,
+            sha_4 = sha_4,
+            sha_5 = sha_5,
+            sha_6 = sha_6,
+            sha_7 = sha_7,
+        }
+    );
+
+    Ok(())
+}

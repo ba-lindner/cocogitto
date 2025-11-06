@@ -4,6 +4,7 @@ use crate::conventional::changelog::template::PackageBumpContext;
 use crate::conventional::changelog::template::Template;
 
 use crate::conventional::changelog::ReleaseType;
+use crate::git::rev::filters::CommitFilter;
 use crate::CocoGitto;
 use crate::SETTINGS;
 use anyhow::anyhow;
@@ -39,20 +40,19 @@ impl CocoGitto {
         for (package_name, package_path) in package_data.iter() {
             let range = self
                 .repository
-                .get_commit_range_for_package(pattern, package_name)?;
+                .revwalk(pattern)?
+                .apply_filter(CommitFilter::Package(package_name))?;
             if range.is_empty() {
                 continue;
             }
 
-            let from = Some(range.from_oid().into_release_version(Some(package_name)));
-
-            let version = range.to_oid().into_release_version(Some(package_name));
+            let (from, version) = range.version_range();
 
             let context = PackageBumpContext {
                 package_name,
                 package_path,
                 version,
-                from,
+                from: Some(from),
             };
 
             packages.push(context);
@@ -62,12 +62,12 @@ impl CocoGitto {
             packages,
         };
 
-        let commit_range = if unified {
-            self.repository.revwalk(pattern)?
+        let filter = if unified {
+            CommitFilter::Standard
         } else {
-            self.repository
-                .get_commit_range_for_monorepo_global(pattern)?
+            CommitFilter::Global
         };
+        let commit_range = self.repository.revwalk(pattern)?.apply_filter(filter)?;
 
         let changelog = Release::try_from(commit_range)?;
 

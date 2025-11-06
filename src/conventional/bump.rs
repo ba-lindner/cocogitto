@@ -106,7 +106,7 @@ impl Tag {
                     .or_else(|| repository.parse_rev(&self.to_string()).ok()),
                 to: None,
             })?
-            .apply_filter(repository, filter)?
+            .apply_filter(filter)?
             .iter_commits()
             .filter(|commit| commit.should_retain_by_settings())
             .map(|commit| Commit::from_git_commit(commit))

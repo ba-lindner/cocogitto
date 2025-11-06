@@ -182,6 +182,7 @@ impl CocoGitto {
                 ),
             })
         }
+        template_context.sort_by_key(|package| package.package_name);
 
         if !SETTINGS.disable_changelog {
             let pattern = self.get_bump_revspec(&bump_res.current);
@@ -314,6 +315,7 @@ impl CocoGitto {
                 from: None,
             })
         }
+        template_context.sort_by_key(|package| package.package_name);
 
         if !SETTINGS.disable_changelog {
             let pattern = self.get_bump_revspec(&bump_res.current);
