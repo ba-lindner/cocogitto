@@ -3,6 +3,8 @@ use std::fmt::{Debug, Display, Formatter};
 use std::io;
 use std::path::PathBuf;
 
+use crate::git::error::Git2Error;
+
 #[derive(Debug)]
 pub enum ChangelogError {
     TemplateNotFound(PathBuf),
@@ -10,6 +12,7 @@ pub enum ChangelogError {
     WriteError(io::Error),
     SeparatorNotFound(PathBuf),
     EmptyRelease,
+    GitError(Git2Error),
 }
 
 impl Display for ChangelogError {
@@ -30,6 +33,7 @@ impl Display for ChangelogError {
                 path.as_path().display()
             ),
             ChangelogError::EmptyRelease => writeln!(f, "No commit found to create a changelog",),
+            ChangelogError::GitError(err) => writeln!(f, "failed to build changelog: \n\t{err}"),
         }
     }
 }
@@ -43,6 +47,12 @@ impl From<io::Error> for ChangelogError {
 impl From<tera::Error> for ChangelogError {
     fn from(err: tera::Error) -> Self {
         Self::TeraError(err)
+    }
+}
+
+impl From<Git2Error> for ChangelogError {
+    fn from(err: Git2Error) -> Self {
+        Self::GitError(err)
     }
 }
 

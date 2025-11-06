@@ -1,5 +1,5 @@
 use crate::{
-    git::{error::Git2Error, repository::Repository},
+    git::{error::Git2Error, repository::Repository, tag::Tag},
     settings::MonoRepoPackage,
     SETTINGS,
 };
@@ -123,7 +123,8 @@ impl Repository {
     }
 }
 
-pub(crate) enum CommitFilter<'p> {
+#[derive(Debug, Clone, Copy)]
+pub enum CommitFilter<'p> {
     /// no filtering
     Standard,
     /// global commits only
@@ -142,6 +143,14 @@ impl CommitFilter<'_> {
             CommitFilter::Standard => Ok(true),
             CommitFilter::Global => repository.is_commit_global(commit),
             CommitFilter::Package(package) => repository.is_commit_in_package(commit, package),
+        }
+    }
+
+    pub(crate) fn matches_tag(&self, tag: &Tag) -> bool {
+        match self {
+            CommitFilter::Standard => true,
+            CommitFilter::Global => tag.package.is_none(),
+            CommitFilter::Package(package) => tag.package.as_deref() == Some(package),
         }
     }
 }

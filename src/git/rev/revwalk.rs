@@ -8,24 +8,6 @@ use crate::git::rev::revspec::RevSpecPattern2;
 use crate::git::rev::CommitIter;
 
 impl Repository {
-    /// Return a commit range for the given package from a [`RevspecPattern2`]
-    pub fn get_commit_range_for_package(
-        &self,
-        pattern: RevSpecPattern2,
-        package: &str,
-    ) -> Result<CommitIter<'_>, Git2Error> {
-        self.revwalk(pattern)?
-            .apply_filter(self, CommitFilter::Package(package))
-    }
-
-    pub fn get_commit_range_for_monorepo_global(
-        &self,
-        pattern: RevSpecPattern2,
-    ) -> Result<CommitIter<'_>, Git2Error> {
-        self.revwalk(pattern)?
-            .apply_filter(self, CommitFilter::Global)
-    }
-
     /// Return a commit range from a [`RevSpecPattern2`]
     pub fn revwalk(&self, spec: RevSpecPattern2) -> Result<CommitIter<'_>, Git2Error> {
         let cache = self.get_cache();
@@ -48,7 +30,12 @@ impl Repository {
             commits.push((info, commit));
         }
 
-        Ok(CommitIter(commits))
+        Ok(CommitIter {
+            commits,
+            spec,
+            repository: self,
+            filter: CommitFilter::Standard,
+        })
     }
 }
 
@@ -69,6 +56,7 @@ mod test {
     use crate::git::error::Git2Error;
     use crate::git::oid::CommitInfo;
     use crate::git::repository::Repository;
+    use crate::git::rev::filters::CommitFilter;
     use crate::git::rev::revspec::RevSpecPattern2;
     use crate::git::rev::CommitIter;
     use crate::git::tag::Tag;
@@ -92,7 +80,7 @@ mod test {
         let range = repo.revwalk_pattern("..")?;
 
         // Assert
-        assert_that!(range.0).is_not_empty();
+        assert_that!(range.commits).is_not_empty();
         Ok(())
     }
 
@@ -184,9 +172,11 @@ mod test {
 
         // Assert
         assert_that!(release.version.to_string()).is_equal_to("0.32.3".to_string());
+        assert_that!(release.from.to_string()).is_equal_to("0.32.2".to_string());
 
         let release = *release.previous.unwrap();
         assert_that!(release.version.to_string()).is_equal_to("0.32.2".to_string());
+        assert_that!(release.from.to_string()).is_equal_to("0.32.1".to_string());
 
         assert_that!(release.previous).is_none();
         Ok(())
@@ -215,7 +205,7 @@ mod test {
         info.first = true;
         assert_that!(commit_range.from_oid()).is_equal_to(info);
         assert_that!(commit_range.to_oid().to_string()).is_equal_to("1.0.0".to_string());
-        assert_that!(commit_range.0).has_length(2);
+        assert_that!(commit_range.commits).has_length(2);
         Ok(())
     }
 
@@ -253,13 +243,14 @@ mod test {
             git commit -m "feat: global change";
         )?;
 
-        let commit_range_package =
-            repo.get_commit_range_for_package(RevSpecPattern2::full(), "one")?;
-        let commit_range_global =
-            repo.get_commit_range_for_monorepo_global(RevSpecPattern2::full());
-        let commit_range_global = commit_range_global?;
-        assert_that!(commit_range_package.0).has_length(1);
-        assert_that!(commit_range_global.0).has_length(2);
+        let commit_range_package = repo
+            .revwalk(RevSpecPattern2::full())?
+            .apply_filter(CommitFilter::Package("one"))?;
+        let commit_range_global = repo
+            .revwalk(RevSpecPattern2::full())?
+            .apply_filter(CommitFilter::Global)?;
+        assert_that!(commit_range_package.commits).has_length(1);
+        assert_that!(commit_range_global.commits).has_length(2);
         Ok(())
     }
 
@@ -273,11 +264,12 @@ mod test {
             git commit -m "feat: commit to non-ignored path";
         )?;
 
-        let commit_range_package =
-            repo.get_commit_range_for_package(repo.revspec_from_str("HEAD~1..HEAD")?, "one")?;
+        let commit_range_package = repo
+            .revwalk_pattern("HEAD~1..HEAD")?
+            .apply_filter(CommitFilter::Package("one"))?;
 
         asserting!("package with changes have some commits")
-            .that(&commit_range_package.0)
+            .that(&commit_range_package.commits)
             .mapped_contains(
                 |(_, commit)| commit.message(),
                 &Some("feat: commit to non-ignored path\n"),
@@ -296,11 +288,12 @@ mod test {
             git commit -m "feat: commit to ignored path";
         )?;
 
-        let commit_range_package =
-            repo.get_commit_range_for_package(repo.revspec_from_str("HEAD~1..HEAD")?, "one")?;
+        let commit_range_package = repo
+            .revwalk_pattern("HEAD~1..HEAD")?
+            .apply_filter(CommitFilter::Package("one"))?;
 
         asserting!("package with no changes should have some commits for HEAD~1 revspec")
-            .that(&commit_range_package.0)
+            .that(&commit_range_package.commits)
             .has_length(0);
 
         Ok(())
@@ -316,17 +309,18 @@ mod test {
             git commit -m "feat: commit to extra included path";
         )?;
 
-        let commit_range_package =
-            repo.get_commit_range_for_package(repo.revspec_from_str("HEAD~1..HEAD")?, "one")?;
+        let commit_range_package = repo
+            .revwalk_pattern("HEAD~1..HEAD")?
+            .apply_filter(CommitFilter::Package("one"))?;
 
         asserting!("package with shared changes should have some commits for HEAD~1 revspec")
-            .that(&commit_range_package.0)
+            .that(&commit_range_package.commits)
             .mapped_contains(
                 |(_, commit)| commit.message(),
                 &Some("feat: commit to extra included path\n"),
             );
 
-        assert_that!(commit_range_package.0).has_length(1);
+        assert_that!(commit_range_package.commits).has_length(1);
 
         Ok(())
     }
@@ -341,19 +335,20 @@ mod test {
             git commit -m "feat: commit to extra included file";
         )?;
 
-        let commit_range_package =
-            repo.get_commit_range_for_package(repo.revspec_from_str("HEAD~1..HEAD")?, "one")?;
+        let commit_range_package = repo
+            .revwalk_pattern("HEAD~1..HEAD")?
+            .apply_filter(CommitFilter::Package("one"))?;
 
         asserting!(
             "package with extra included changes should have some commits for HEAD~1 revspec"
         )
-        .that(&commit_range_package.0)
+        .that(&commit_range_package.commits)
         .mapped_contains(
             |(_, commit)| commit.message(),
             &Some("feat: commit to extra included file\n"),
         );
 
-        assert_that!(commit_range_package.0).has_length(1);
+        assert_that!(commit_range_package.commits).has_length(1);
 
         Ok(())
     }
@@ -361,10 +356,11 @@ mod test {
     #[sealed_test]
     fn package_with_with_only_ignored_path_should_have_no_commit() -> Result<()> {
         let repo = init_mono_repo_for_range_filtering()?;
-        let commit_range_package =
-            repo.get_commit_range_for_package(RevSpecPattern2::full(), "one")?;
+        let commit_range_package = repo
+            .revwalk(RevSpecPattern2::full())?
+            .apply_filter(CommitFilter::Package("one"))?;
         asserting!("package with with only ignored path commit should have no commits for full range revspec")
-            .that(&commit_range_package.0).has_length(0);
+            .that(&commit_range_package.commits).has_length(0);
 
         Ok(())
     }
@@ -415,7 +411,7 @@ mod test {
         // Assert
         assert_that!(commit_range.from_oid().to_string()).is_equal_to(first);
         assert_that!(commit_range.to_oid().to_string()).is_equal_to("1.0.0".to_string());
-        assert_that!(commit_range.0).has_length(2);
+        assert_that!(commit_range.commits).has_length(2);
         Ok(())
     }
 
@@ -624,7 +620,9 @@ mod test {
         )?;
 
         // Act
-        let range = repo.get_commit_range_for_package(RevSpecPattern2::full(), "two")?;
+        let range = repo
+            .revwalk(RevSpecPattern2::full())?
+            .apply_filter(CommitFilter::Package("two"))?;
         let range = range.into_iter().collect::<Vec<_>>();
 
         // Assert

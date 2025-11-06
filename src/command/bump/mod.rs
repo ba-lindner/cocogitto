@@ -6,6 +6,7 @@ use crate::git::oid::ReleaseVersion;
 use crate::conventional::error::BumpError as ConvBumpError;
 use crate::conventional::version::IncrementCommand;
 use crate::git::repository::Repository;
+use crate::git::rev::filters::CommitFilter;
 use crate::git::rev::revspec::RevSpecPattern2;
 use crate::git::tag::Tag;
 use crate::hook::{Hook, HookVersion, Hooks};
@@ -311,9 +312,10 @@ impl CocoGitto {
     ) -> Result<Release<'_>> {
         let commit_range = self
             .repository
-            .get_commit_range_for_package(pattern, package)?;
+            .revwalk(pattern)?
+            .apply_filter(CommitFilter::Package(package))?;
 
-        let mut release = Release::build_package(commit_range, package)?;
+        let mut release = Release::try_from(commit_range)?;
         release.version = tag.into();
         Ok(release)
     }
@@ -327,7 +329,8 @@ impl CocoGitto {
     ) -> Result<Release<'_>> {
         let commit_range = self
             .repository
-            .get_commit_range_for_monorepo_global(pattern)?;
+            .revwalk(pattern)?
+            .apply_filter(CommitFilter::Global)?;
 
         let release = match Release::try_from(commit_range) {
             Ok(mut release) => {
