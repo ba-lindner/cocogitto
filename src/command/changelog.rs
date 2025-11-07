@@ -29,10 +29,10 @@ impl CocoGitto {
     ) -> Result<String> {
         let mut packages = vec![];
 
-        let mut package_data: Vec<(&String, String)> = SETTINGS
+        let mut package_data: Vec<_> = SETTINGS
             .packages
             .iter()
-            .map(|(name, p)| (name, p.path.to_string_lossy().to_string()))
+            .map(|(name, p)| (name, &p.path))
             .collect();
         package_data.sort_by_key(|&(name, _)| name);
 

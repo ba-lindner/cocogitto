@@ -91,6 +91,8 @@ impl<'a> From<&'a Footer> for ChangelogFooter<'a> {
 
 #[cfg(test)]
 mod test {
+    use std::path::Path;
+
     use anyhow::Result;
     use chrono::NaiveDateTime;
     use conventional_commit_parser::commit::{CommitType, ConventionalCommit, Footer};
@@ -705,7 +707,7 @@ mod test {
             packages: vec![
                 PackageBumpContext {
                     package_name: "one",
-                    package_path: "crates/one",
+                    package_path: Path::new("crates/one"),
                     version: Tag::from_str(
                         "0.1.0",
                         Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
@@ -723,7 +725,7 @@ mod test {
                 },
                 PackageBumpContext {
                     package_name: "two",
-                    package_path: "crates/two",
+                    package_path: Path::new("crates/two"),
                     version: Tag::from_str(
                         "0.2.0",
                         Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
@@ -751,7 +753,7 @@ mod test {
             packages: vec![
                 PackageBumpContext {
                     package_name: "one",
-                    package_path: "crates/one",
+                    package_path: Path::new("crates/one"),
                     version: Tag::from_str(
                         "0.1.0",
                         Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
@@ -761,7 +763,7 @@ mod test {
                 },
                 PackageBumpContext {
                     package_name: "two",
-                    package_path: "crates/two",
+                    package_path: Path::new("crates/two"),
                     version: Tag::from_str(
                         "0.2.0",
                         Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),

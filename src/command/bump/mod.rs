@@ -4,7 +4,7 @@ use crate::git::error::TagError;
 use crate::git::oid::ReleaseVersion;
 
 use crate::conventional::error::BumpError as ConvBumpError;
-use crate::conventional::version::IncrementCommand;
+use crate::conventional::version::{Increment, IncrementCommand};
 use crate::git::repository::Repository;
 use crate::git::rev::filters::CommitFilter;
 use crate::git::rev::revspec::RevSpecPattern2;
@@ -30,8 +30,26 @@ mod monorepo;
 mod package;
 mod standard;
 
-#[derive(Default)]
-pub struct BumpOptions<'a> {
+type WithPkg<'p> = (&'p str, &'p MonoRepoPackage);
+
+trait MaybePkg: Copy {
+    fn maybe_pkg(&self) -> Option<WithPkg<'_>>;
+}
+
+impl MaybePkg for () {
+    fn maybe_pkg(&self) -> Option<WithPkg<'_>> {
+        None
+    }
+}
+
+impl MaybePkg for WithPkg<'_> {
+    fn maybe_pkg(&self) -> Option<WithPkg<'_>> {
+        Some(*self)
+    }
+}
+
+#[derive(Default, Clone)]
+pub struct BumpOptions<'a, P = ()> {
     pub increment: IncrementCommand,
     pub pre_release: Option<&'a str>,
     pub build: Option<&'a str>,
@@ -43,47 +61,65 @@ pub struct BumpOptions<'a> {
     pub skip_untracked: bool,
     pub disable_bump_commit: bool,
     pub include_packages: bool,
+    pub package: P,
 }
 
-#[derive(Default)]
-pub struct PackageBumpOptions<'a> {
-    pub package_name: &'a str,
-    pub package: &'a MonoRepoPackage,
-    pub increment: IncrementCommand,
-    pub pre_release: Option<&'a str>,
-    pub build: Option<&'a str>,
-    pub hooks_config: Option<&'a str>,
-    pub annotated: Option<String>,
-    pub dry_run: bool,
-    pub skip_ci: bool,
-    pub skip_ci_override: Option<String>,
-    pub skip_untracked: bool,
-    pub disable_bump_commit: bool,
-}
-
-struct BumpResult {
+struct BumpResult<P = ()> {
     current: Tag,
     next: Tag,
     had_commits: bool,
+    package: P,
 }
 
-impl BumpResult {
+impl<P> BumpResult<P> {
     fn no_change(&self) -> bool {
         self.current.version == self.next.version
     }
+
+    fn increment(&self) -> Increment {
+        self.next
+            .get_increment_from(&self.current)
+            .unwrap_or(Increment::NoBump)
+    }
+
+    fn as_hook_options<'h>(
+        &'h self,
+        hook_type: HookType,
+        hooks_config: Option<&'h str>,
+    ) -> HookRunOptions<'h>
+    where
+        P: MaybePkg,
+    {
+        let (package_name, package) = self.package.maybe_pkg().unzip();
+        HookRunOptions {
+            hook_type,
+            current_tag: Some(HookVersion::new(self.current.clone()))
+                .filter(|tag| !tag.prefixed_tag.is_zero()),
+            next_version: Some(HookVersion::new(self.next.clone())),
+            hook_profile: hooks_config,
+            package_name,
+            package,
+        }
+    }
 }
 
-impl<'a> BumpOptions<'a> {
+impl<'a, P> BumpOptions<'a, P> {
     fn get_new_version(
         &self,
         repository: &Repository,
-        package: Option<&str>,
         allow_empty: bool,
         increment: Option<IncrementCommand>,
-    ) -> Result<BumpResult> {
+    ) -> Result<BumpResult<P>>
+    where
+        P: MaybePkg,
+    {
+        let package = self.package.maybe_pkg().unzip().0;
         let current = match repository.get_latest_tag(package, false) {
             Ok(tag) => tag,
-            Err(TagError::NoTag) => Tag::default(),
+            Err(TagError::NoTag) => Tag {
+                package: package.map(ToString::to_string),
+                ..Default::default()
+            },
             Err(other) => bail!(other),
         };
         let current_prerelease = repository
@@ -94,9 +130,12 @@ impl<'a> BumpOptions<'a> {
         let increment = increment.unwrap_or_else(|| self.increment.clone());
         let (mut next, had_commits) = match current.bump(increment, repository) {
             Ok(tag) => (tag, true),
-            Err(ConvBumpError::NoCommitFound) if allow_empty => (current.strip_metadata(), false),
+            Err(ConvBumpError::NoCommitFound) if allow_empty => {
+                (current.clone().reset_metadata(), false)
+            }
             Err(other) => bail!(other),
         };
+        assert_eq!(next.package, current.package);
 
         // if prerelease exists, ensure the new tag is not smaller
         if let Some(pre_release) = &current_prerelease {
@@ -131,32 +170,32 @@ impl<'a> BumpOptions<'a> {
             current,
             next,
             had_commits,
+            package: self.package,
         })
     }
-}
 
-impl<'a> PackageBumpOptions<'a> {
-    fn common(&self) -> BumpOptions<'a> {
+    pub fn set_package<P2>(self, package: P2) -> BumpOptions<'a, P2> {
         BumpOptions {
-            increment: self.increment.clone(),
+            increment: self.increment,
             pre_release: self.pre_release,
             build: self.build,
             hooks_config: self.hooks_config,
-            annotated: self.annotated.clone(),
+            annotated: self.annotated,
             dry_run: self.dry_run,
             skip_ci: self.skip_ci,
-            skip_ci_override: self.skip_ci_override.clone(),
+            skip_ci_override: self.skip_ci_override,
             skip_untracked: self.skip_untracked,
             disable_bump_commit: self.disable_bump_commit,
-            include_packages: false,
+            include_packages: self.include_packages,
+            package,
         }
     }
 }
 
 struct HookRunOptions<'a> {
     hook_type: HookType,
-    current_tag: Option<&'a HookVersion>,
-    next_version: Option<&'a HookVersion>,
+    current_tag: Option<HookVersion>,
+    next_version: Option<HookVersion>,
     hook_profile: Option<&'a str>,
     package_name: Option<&'a str>,
     package: Option<&'a MonoRepoPackage>,
@@ -185,36 +224,11 @@ impl<'a> HookRunOptions<'a> {
         }
     }
 
-    pub fn current_tag<'b>(mut self, version: Option<&'b HookVersion>) -> Self
-    where
-        'b: 'a,
-    {
-        self.current_tag = version;
-        self
-    }
-
-    pub fn next_version<'b>(mut self, version: &'b HookVersion) -> Self
-    where
-        'b: 'a,
-    {
-        self.next_version = Some(version);
-        self
-    }
-
     pub fn hook_profile<'b>(mut self, profile: Option<&'b str>) -> Self
     where
         'b: 'a,
     {
         self.hook_profile = profile;
-        self
-    }
-
-    pub fn package<'b>(mut self, name: &'b str, package: &'b MonoRepoPackage) -> Self
-    where
-        'b: 'a,
-    {
-        self.package_name = Some(name);
-        self.package = Some(package);
         self
     }
 }
@@ -417,7 +431,7 @@ impl CocoGitto {
         }
 
         for mut hook in hooks {
-            hook.insert_versions(options.current_tag, options.next_version)?;
+            hook.insert_versions(options.current_tag.as_ref(), options.next_version.as_ref())?;
             let command = hook.to_string();
             let command = if command.chars().count() > 78 {
                 &command[0..command.len()]

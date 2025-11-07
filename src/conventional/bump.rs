@@ -87,7 +87,7 @@ impl Tag {
         }
     }
 
-    fn reset_metadata(mut self) -> Self {
+    pub(crate) fn reset_metadata(mut self) -> Self {
         self.version.build = BuildMetadata::EMPTY;
         self.version.pre = Prerelease::EMPTY;
         self.oid = None;
