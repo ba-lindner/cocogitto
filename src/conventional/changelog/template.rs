@@ -5,7 +5,7 @@ use serde::Serialize;
 
 use crate::git::oid::ReleaseVersion;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tera::Context;
 
 const DEFAULT_TEMPLATE: &[u8] = include_bytes!("template/simple.tera");
@@ -169,7 +169,7 @@ pub struct MonoRepoContext<'a> {
 #[derive(Debug, Serialize)]
 pub struct PackageBumpContext<'a> {
     pub package_name: &'a str,
-    pub package_path: &'a str,
+    pub package_path: &'a Path,
     pub version: ReleaseVersion,
     pub from: Option<ReleaseVersion>,
 }

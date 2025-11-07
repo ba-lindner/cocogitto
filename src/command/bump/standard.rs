@@ -1,9 +1,10 @@
-use crate::command::bump::{BumpOptions, HookRunOptions};
+use crate::command::bump::BumpOptions;
 
 use crate::conventional::changelog::ReleaseType;
 
 use crate::git::tag::Tag;
 use crate::hook::HookVersion;
+use crate::settings::HookType;
 use crate::{settings, CocoGitto, SETTINGS};
 use anyhow::Result;
 use colored::*;
@@ -14,23 +15,22 @@ impl CocoGitto {
     pub fn create_version(&mut self, opts: BumpOptions) -> Result<()> {
         self.pre_bump_checks(opts.skip_untracked)?;
 
-        let bump_res = opts.get_new_version(&self.repository, None, false, None)?;
+        let bump_res = opts.get_new_version(&self.repository, false, None)?;
         if bump_res.no_change() {
             print!("No conventional commits for your repository that required a bump. Changelogs will be updated on the next bump.\nPre-Hooks and Post-Hooks have been skipped.\n");
             return Ok(());
         }
 
-        let tag = Tag::create(bump_res.next.version, None);
-
         if opts.dry_run {
-            print!("{tag}");
+            print!("{}", bump_res.next);
             return Ok(());
         }
 
         let pattern = self.get_bump_revspec(&bump_res.current);
 
         if !SETTINGS.disable_changelog {
-            let changelog = self.get_changelog_with_target_version(pattern, tag.clone())?;
+            let changelog =
+                self.get_changelog_with_target_version(pattern, bump_res.next.clone())?;
             changelog.pretty_print_bump_summary()?;
 
             let path = settings::changelog_path();
@@ -45,14 +45,10 @@ impl CocoGitto {
             .map(HookVersion::new)
             .ok();
 
-        let next_version = HookVersion::new(tag.clone());
+        let next_version = HookVersion::new(bump_res.next.clone());
 
-        let hook_result = self.run_hooks(
-            HookRunOptions::pre_bump()
-                .current_tag(current.as_ref())
-                .next_version(&next_version)
-                .hook_profile(opts.hooks_config),
-        );
+        let hook_result =
+            self.run_hooks(bump_res.as_hook_options(HookType::PreBump, opts.hooks_config));
 
         self.repository.add_all()?;
         self.unwrap_or_stash_and_exit(&Tag::default(), hook_result);
@@ -84,20 +80,16 @@ impl CocoGitto {
         if let Some(msg_tmpl) = opts.annotated {
             let mut context = tera::Context::new();
             context.insert("latest", &bump_res.current.version.to_string());
-            context.insert("version", &tag.version.to_string());
+            context.insert("version", &bump_res.next.version.to_string());
             let msg = Tera::one_off(&msg_tmpl, &context, false)?;
             self.repository
-                .create_annotated_tag(&tag, &msg, disable_bump_commit)?;
+                .create_annotated_tag(&bump_res.next, &msg, disable_bump_commit)?;
         } else {
-            self.repository.create_tag(&tag, disable_bump_commit)?;
+            self.repository
+                .create_tag(&bump_res.next, disable_bump_commit)?;
         }
 
-        self.run_hooks(
-            HookRunOptions::post_bump()
-                .current_tag(current.as_ref())
-                .next_version(&next_version)
-                .hook_profile(opts.hooks_config),
-        )?;
+        self.run_hooks(bump_res.as_hook_options(HookType::PostBump, opts.hooks_config))?;
 
         let current = current
             .map(|current| current.prefixed_tag.to_string())
