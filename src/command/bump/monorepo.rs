@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::command::bump::{BumpOptions, BumpResult, HookRunOptions, WithPkg};
+use crate::command::bump::{BumpOptions, BumpResult, WithPkg};
 
 use crate::conventional::changelog::template::{
     MonoRepoContext, PackageBumpContext, PackageContext,
@@ -11,7 +11,6 @@ use crate::conventional::version::IncrementCommand;
 
 use crate::git::error::TagError;
 use crate::git::tag::Tag;
-use crate::hook::HookVersion;
 use crate::settings::{HookType, MonoRepoPackage};
 use crate::{settings, CocoGitto, SETTINGS};
 use anyhow::{bail, Result};
@@ -63,8 +62,7 @@ impl CocoGitto {
             return Ok(());
         }
 
-        let hook_result =
-            self.run_hooks(HookRunOptions::pre_bump().hook_profile(opts.hooks_config));
+        let hook_result = self.run_hooks(None::<&BumpResult>, HookType::PreBump, opts.hooks_config);
 
         let disable_bump_commit = opts.disable_bump_commit || SETTINGS.disable_bump_commit;
 
@@ -96,11 +94,11 @@ impl CocoGitto {
 
         // Run per package post hooks
         for bump in bumps {
-            self.run_hooks(bump.as_hook_options(HookType::PostBump, opts.hooks_config))?;
+            self.run_hooks(Some(&bump), HookType::PostBump, opts.hooks_config)?;
         }
 
         // Run global post hooks
-        self.run_hooks(HookRunOptions::post_bump().hook_profile(opts.hooks_config))?;
+        self.run_hooks(None::<&BumpResult>, HookType::PostBump, opts.hooks_config)?;
 
         Ok(())
     }
@@ -183,10 +181,7 @@ impl CocoGitto {
             )?;
         }
 
-        let next_version = HookVersion::new(tag.clone());
-
-        let hook_result =
-            self.run_hooks(bump_res.as_hook_options(HookType::PreBump, opts.hooks_config));
+        let hook_result = self.run_hooks(Some(&bump_res), HookType::PreBump, opts.hooks_config);
 
         self.repository.add_all()?;
         self.unwrap_or_stash_and_exit(&tag, hook_result);
@@ -199,16 +194,13 @@ impl CocoGitto {
             if opts.skip_ci || opts.skip_ci_override.is_some() {
                 let skip_ci_pattern = opts.skip_ci_override.unwrap_or(SETTINGS.skip_ci.clone());
                 self.repository.commit(
-                    &format!(
-                        "chore(version): {} {}",
-                        next_version.prefixed_tag, skip_ci_pattern
-                    ),
+                    &format!("chore(version): {} {}", bump_res.next, skip_ci_pattern),
                     sign,
                     true,
                 )?;
             } else {
                 self.repository.commit(
-                    &format!("chore(version): {}", next_version.prefixed_tag),
+                    &format!("chore(version): {}", bump_res.next),
                     sign,
                     true,
                 )?;
@@ -235,11 +227,11 @@ impl CocoGitto {
 
         // Run per package post hooks
         for bump in bumps {
-            self.run_hooks(bump.as_hook_options(HookType::PostBump, opts.hooks_config))?;
+            self.run_hooks(Some(&bump), HookType::PostBump, opts.hooks_config)?;
         }
 
         // Run global post hooks
-        self.run_hooks(bump_res.as_hook_options(HookType::PostBump, opts.hooks_config))?;
+        self.run_hooks(Some(&bump_res), HookType::PostBump, opts.hooks_config)?;
 
         Ok(())
     }
@@ -292,10 +284,7 @@ impl CocoGitto {
             )?;
         }
 
-        let next_version = HookVersion::new(tag.clone());
-
-        let hook_result =
-            self.run_hooks(bump_res.as_hook_options(HookType::PreBump, opts.hooks_config));
+        let hook_result = self.run_hooks(Some(&bump_res), HookType::PreBump, opts.hooks_config);
 
         self.repository.add_all()?;
         self.unwrap_or_stash_and_exit(&Tag::default(), hook_result);
@@ -308,16 +297,13 @@ impl CocoGitto {
             if opts.skip_ci || opts.skip_ci_override.is_some() {
                 let skip_ci_pattern = opts.skip_ci_override.unwrap_or(SETTINGS.skip_ci.clone());
                 self.repository.commit(
-                    &format!(
-                        "chore(version): {} {}",
-                        next_version.prefixed_tag, skip_ci_pattern
-                    ),
+                    &format!("chore(version): {} {}", bump_res.next, skip_ci_pattern),
                     sign,
                     true,
                 )?;
             } else {
                 self.repository.commit(
-                    &format!("chore(version): {}", next_version.prefixed_tag),
+                    &format!("chore(version): {}", bump_res.next),
                     sign,
                     true,
                 )?;
@@ -336,7 +322,7 @@ impl CocoGitto {
         }
 
         // Run global post hooks
-        self.run_hooks(bump_res.as_hook_options(HookType::PostBump, opts.hooks_config))?;
+        self.run_hooks(Some(&bump_res), HookType::PostBump, opts.hooks_config)?;
 
         Ok(())
     }
@@ -412,7 +398,7 @@ impl CocoGitto {
                 info!("\tChangelog updated {:?}", path);
             }
 
-            let hook_result = self.run_hooks(bump.as_hook_options(HookType::PreBump, hooks_config));
+            let hook_result = self.run_hooks(Some(bump), HookType::PreBump, hooks_config);
 
             self.repository.add_all()?;
             self.unwrap_or_stash_and_exit(&bump.next, hook_result);

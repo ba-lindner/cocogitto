@@ -120,13 +120,6 @@ impl Default for Tag {
 }
 
 impl Tag {
-    pub(crate) fn strip_metadata(&self) -> Self {
-        let mut copy_without_prefix = self.clone();
-        copy_without_prefix.package = None;
-        copy_without_prefix.prefix = None;
-        copy_without_prefix
-    }
-
     // Tag always contains an oid unless it was created before the tag exist.
     // The only case where we do that is while creating the changelog during `cog bump`.
     // In this situation we need a tag to generate the changelog but this tag does not exist in the
