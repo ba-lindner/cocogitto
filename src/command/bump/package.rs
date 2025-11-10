@@ -59,8 +59,7 @@ impl CocoGitto {
             Some(opts.package.0.to_string()),
         ));
 
-        let hook_result =
-            self.run_hooks(bump_res.as_hook_options(HookType::PreBump, opts.hooks_config));
+        let hook_result = self.run_hooks(Some(&bump_res), HookType::PreBump, opts.hooks_config);
 
         self.repository.add_all()?;
         self.unwrap_or_stash_and_exit(&Tag::default(), hook_result);
@@ -94,7 +93,7 @@ impl CocoGitto {
             self.repository.create_tag(&tag, disable_bump_commit)?;
         }
 
-        self.run_hooks(bump_res.as_hook_options(HookType::PostBump, opts.hooks_config))?;
+        self.run_hooks(Some(&bump_res), HookType::PostBump, opts.hooks_config)?;
 
         let current = current
             .map(|current| current.prefixed_tag.to_string())

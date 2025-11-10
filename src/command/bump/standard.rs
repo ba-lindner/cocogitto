@@ -47,8 +47,7 @@ impl CocoGitto {
 
         let next_version = HookVersion::new(bump_res.next.clone());
 
-        let hook_result =
-            self.run_hooks(bump_res.as_hook_options(HookType::PreBump, opts.hooks_config));
+        let hook_result = self.run_hooks(Some(&bump_res), HookType::PreBump, opts.hooks_config);
 
         self.repository.add_all()?;
         self.unwrap_or_stash_and_exit(&Tag::default(), hook_result);
@@ -61,16 +60,13 @@ impl CocoGitto {
             if opts.skip_ci || opts.skip_ci_override.is_some() {
                 let skip_ci_pattern = opts.skip_ci_override.unwrap_or(SETTINGS.skip_ci.clone());
                 self.repository.commit(
-                    &format!(
-                        "chore(version): {} {}",
-                        next_version.prefixed_tag, skip_ci_pattern
-                    ),
+                    &format!("chore(version): {} {}", bump_res.next, skip_ci_pattern),
                     sign,
                     true,
                 )?;
             } else {
                 self.repository.commit(
-                    &format!("chore(version): {}", next_version.prefixed_tag),
+                    &format!("chore(version): {}", bump_res.next),
                     sign,
                     true,
                 )?;
@@ -89,7 +85,7 @@ impl CocoGitto {
                 .create_tag(&bump_res.next, disable_bump_commit)?;
         }
 
-        self.run_hooks(bump_res.as_hook_options(HookType::PostBump, opts.hooks_config))?;
+        self.run_hooks(Some(&bump_res), HookType::PostBump, opts.hooks_config)?;
 
         let current = current
             .map(|current| current.prefixed_tag.to_string())
