@@ -46,17 +46,6 @@ pub struct VersionSpan {
     default_version: Option<Version>,
 }
 
-#[derive(Debug)]
-pub(crate) struct HookVersion {
-    pub prefixed_tag: Tag,
-}
-
-impl HookVersion {
-    pub(crate) fn new(tag: Tag) -> Self {
-        HookVersion { prefixed_tag: tag }
-    }
-}
-
 impl VersionSpan {
     pub(crate) fn build_version_str(
         &self,
