@@ -6,43 +6,11 @@ use git2::Oid;
 use semver::Version;
 
 use crate::conventional::version::Increment;
-use crate::git::error::{Git2Error, TagError};
+use crate::git::error::TagError;
 use crate::git::repository::Repository;
 use crate::SETTINGS;
 
 impl Repository {
-    pub(crate) fn create_tag(&self, tag: &Tag, disable_bump_commit: bool) -> Result<(), Git2Error> {
-        if !disable_bump_commit && self.has_uncommitted_changes(true) {
-            let statuses = self.get_statuses()?;
-            return Err(Git2Error::ChangesNeedToBeCommitted(statuses));
-        }
-
-        let head = self.get_head_commit().unwrap();
-        self.0
-            .tag_lightweight(&tag.to_string(), &head.into_object(), false)
-            .map(|_| ())
-            .map_err(Git2Error::from)
-    }
-
-    pub(crate) fn create_annotated_tag(
-        &self,
-        tag: &Tag,
-        msg: &str,
-        disable_bump_commit: bool,
-    ) -> Result<(), Git2Error> {
-        if !disable_bump_commit && self.has_uncommitted_changes(true) {
-            let statuses = self.get_statuses()?;
-            return Err(Git2Error::ChangesNeedToBeCommitted(statuses));
-        }
-
-        let head = self.get_head_commit().unwrap();
-        let sig = self.0.signature()?;
-        self.0
-            .tag(&tag.to_string(), &head.into_object(), &sig, msg, false)
-            .map(|_| ())
-            .map_err(Git2Error::from)
-    }
-
     /// Get the latest tag, will ignore package tag if on a monorepo
     pub(crate) fn get_latest_tag(
         &self,

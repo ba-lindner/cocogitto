@@ -366,6 +366,45 @@ impl CocoGitto {
 
         Ok(())
     }
+
+    fn create_bump_commit<P>(&self, opts: &BumpOptions<P>, msg: impl ToString) -> Result<()> {
+        if opts.disable_bump_commit || SETTINGS.disable_bump_commit {
+            return Ok(());
+        }
+
+        let skip_ci = opts
+            .skip_ci_override
+            .as_deref()
+            .or(opts.skip_ci.then_some(&SETTINGS.skip_ci));
+        let message = if let Some(skip_ci) = skip_ci {
+            format!("chore(version): {} {skip_ci}", msg.to_string())
+        } else {
+            format!("chore(version): {}", msg.to_string())
+        };
+
+        let sign = self.repository.gpg_sign();
+        self.repository.commit(&message, sign, true)?;
+
+        Ok(())
+    }
+
+    fn create_bump_tag<P>(&self, bump: &BumpResult<P>, annotated: Option<&str>) -> Result<()> {
+        let head = self.repository.get_head_commit()?.into_object();
+        let tag = bump.next.to_string();
+
+        if let Some(msg_tmpl) = annotated {
+            let mut context = tera::Context::new();
+            context.insert("latest", &bump.current.version.to_string());
+            context.insert("version", &bump.next.version.to_string());
+            let message = tera::Tera::one_off(msg_tmpl, &context, false)?;
+            let sig = self.repository.0.signature()?;
+            self.repository.0.tag(&tag, &head, &sig, &message, false)?;
+        } else {
+            self.repository.0.tag_lightweight(&tag, &head, false)?;
+        }
+
+        Ok(())
+    }
 }
 
 impl Release<'_> {

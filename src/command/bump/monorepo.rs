@@ -16,7 +16,6 @@ use crate::{settings, CocoGitto, SETTINGS};
 use anyhow::{bail, Result};
 
 use log::{info, warn};
-use tera::Tera;
 
 use crate::git::oid::ReleaseVersion;
 
@@ -64,31 +63,15 @@ impl CocoGitto {
 
         let hook_result = self.run_hooks(None::<&BumpResult>, HookType::PreBump, opts.hooks_config);
 
-        let disable_bump_commit = opts.disable_bump_commit || SETTINGS.disable_bump_commit;
-
         self.repository.add_all()?;
         self.unwrap_or_stash_and_exit(&Tag::default(), hook_result);
         self.bump_packages(opts.hooks_config, &bumps)?;
 
-        if !disable_bump_commit {
-            let sign = self.repository.gpg_sign();
-            if opts.skip_ci || opts.skip_ci_override.is_some() {
-                let skip_ci_pattern = opts.skip_ci_override.unwrap_or(SETTINGS.skip_ci.clone());
-                self.repository.commit(
-                    &format!("chore(version): bump packages {skip_ci_pattern}"),
-                    sign,
-                    true,
-                )?;
-            } else {
-                self.repository
-                    .commit("chore(version): bump packages", sign, true)?;
-            }
-        }
+        self.create_bump_commit(&opts, "bump packages")?;
 
         if SETTINGS.generate_mono_repository_package_tags {
             for bump in &bumps {
-                self.repository
-                    .create_tag(&bump.next, disable_bump_commit)?;
+                self.create_bump_tag(bump, None)?;
             }
         }
 
@@ -184,44 +167,15 @@ impl CocoGitto {
         self.unwrap_or_stash_and_exit(&bump_res.next, hook_result);
         self.bump_packages(opts.hooks_config, &bumps)?;
 
-        let disable_bump_commit = opts.disable_bump_commit || SETTINGS.disable_bump_commit;
-
-        if !disable_bump_commit {
-            let sign = self.repository.gpg_sign();
-            if opts.skip_ci || opts.skip_ci_override.is_some() {
-                let skip_ci_pattern = opts.skip_ci_override.unwrap_or(SETTINGS.skip_ci.clone());
-                self.repository.commit(
-                    &format!("chore(version): {} {}", bump_res.next, skip_ci_pattern),
-                    sign,
-                    true,
-                )?;
-            } else {
-                self.repository.commit(
-                    &format!("chore(version): {}", bump_res.next),
-                    sign,
-                    true,
-                )?;
-            }
-        }
+        self.create_bump_commit(&opts, &bump_res.next)?;
 
         if SETTINGS.generate_mono_repository_package_tags {
             for bump in &bumps {
-                self.repository
-                    .create_tag(&bump.next, disable_bump_commit)?;
+                self.create_bump_tag(bump, None)?;
             }
         }
 
-        if let Some(msg_tmpl) = opts.annotated {
-            let mut context = tera::Context::new();
-            context.insert("latest", &bump_res.current.version.to_string());
-            context.insert("version", &bump_res.next.version.to_string());
-            let msg = Tera::one_off(&msg_tmpl, &context, false)?;
-            self.repository
-                .create_annotated_tag(&bump_res.next, &msg, disable_bump_commit)?;
-        } else {
-            self.repository
-                .create_tag(&bump_res.next, disable_bump_commit)?;
-        }
+        self.create_bump_tag(&bump_res, opts.annotated.as_deref())?;
 
         // Run per package post hooks
         for bump in bumps {
@@ -285,38 +239,9 @@ impl CocoGitto {
         self.repository.add_all()?;
         self.unwrap_or_stash_and_exit(&Tag::default(), hook_result);
 
-        let disable_bump_commit = opts.disable_bump_commit || SETTINGS.disable_bump_commit;
+        self.create_bump_commit(&opts, &bump_res.next)?;
 
-        if !disable_bump_commit {
-            let sign = self.repository.gpg_sign();
-
-            if opts.skip_ci || opts.skip_ci_override.is_some() {
-                let skip_ci_pattern = opts.skip_ci_override.unwrap_or(SETTINGS.skip_ci.clone());
-                self.repository.commit(
-                    &format!("chore(version): {} {}", bump_res.next, skip_ci_pattern),
-                    sign,
-                    true,
-                )?;
-            } else {
-                self.repository.commit(
-                    &format!("chore(version): {}", bump_res.next),
-                    sign,
-                    true,
-                )?;
-            }
-        }
-
-        if let Some(msg_tmpl) = opts.annotated {
-            let mut context = tera::Context::new();
-            context.insert("latest", &bump_res.current.version.to_string());
-            context.insert("version", &bump_res.next.version.to_string());
-            let msg = Tera::one_off(&msg_tmpl, &context, false)?;
-            self.repository
-                .create_annotated_tag(&bump_res.next, &msg, disable_bump_commit)?;
-        } else {
-            self.repository
-                .create_tag(&bump_res.next, disable_bump_commit)?;
-        }
+        self.create_bump_tag(&bump_res, opts.annotated.as_deref())?;
 
         // Run global post hooks
         self.run_hooks(Some(&bump_res), HookType::PostBump, opts.hooks_config)?;
