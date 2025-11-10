@@ -3,7 +3,6 @@ use crate::command::bump::BumpOptions;
 use crate::conventional::changelog::ReleaseType;
 
 use crate::git::tag::Tag;
-use crate::hook::HookVersion;
 use crate::settings::HookType;
 use crate::{settings, CocoGitto, SETTINGS};
 use anyhow::Result;
@@ -38,14 +37,6 @@ impl CocoGitto {
 
             changelog.write_to_file(path, template, ReleaseType::Standard)?;
         }
-
-        let current = self
-            .repository
-            .get_latest_tag(None, false)
-            .map(HookVersion::new)
-            .ok();
-
-        let next_version = HookVersion::new(bump_res.next.clone());
 
         let hook_result = self.run_hooks(Some(&bump_res), HookType::PreBump, opts.hooks_config);
 
@@ -87,10 +78,7 @@ impl CocoGitto {
 
         self.run_hooks(Some(&bump_res), HookType::PostBump, opts.hooks_config)?;
 
-        let current = current
-            .map(|current| current.prefixed_tag.to_string())
-            .unwrap_or_else(|| "...".to_string());
-        let bump = format!("{} -> {}", current, next_version.prefixed_tag).green();
+        let bump = format!("{} -> {}", bump_res.current, bump_res.next).green();
         info!("Bumped version: {}", bump);
 
         Ok(())

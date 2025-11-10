@@ -130,13 +130,11 @@ impl CocoGitto {
 
         let bump_res = opts.get_new_version(&self.repository, false, Some(increment))?;
 
-        let tag = Tag::create(bump_res.next.version.clone(), None);
-
         if opts.dry_run {
             for bump in bumps {
                 println!("{}", bump.next)
             }
-            print!("{tag}");
+            print!("{}", bump_res.next);
             return Ok(());
         }
 
@@ -163,7 +161,7 @@ impl CocoGitto {
             let changelog = self.get_monorepo_global_changelog_for_version(
                 pattern,
                 bump_res.current.clone().into(),
-                tag.clone(),
+                bump_res.next.clone(),
             )?;
 
             changelog.pretty_print_bump_summary()?;
@@ -184,7 +182,7 @@ impl CocoGitto {
         let hook_result = self.run_hooks(Some(&bump_res), HookType::PreBump, opts.hooks_config);
 
         self.repository.add_all()?;
-        self.unwrap_or_stash_and_exit(&tag, hook_result);
+        self.unwrap_or_stash_and_exit(&bump_res.next, hook_result);
         self.bump_packages(opts.hooks_config, &bumps)?;
 
         let disable_bump_commit = opts.disable_bump_commit || SETTINGS.disable_bump_commit;
@@ -217,12 +215,13 @@ impl CocoGitto {
         if let Some(msg_tmpl) = opts.annotated {
             let mut context = tera::Context::new();
             context.insert("latest", &bump_res.current.version.to_string());
-            context.insert("version", &tag.version.to_string());
+            context.insert("version", &bump_res.next.version.to_string());
             let msg = Tera::one_off(&msg_tmpl, &context, false)?;
             self.repository
-                .create_annotated_tag(&tag, &msg, disable_bump_commit)?;
+                .create_annotated_tag(&bump_res.next, &msg, disable_bump_commit)?;
         } else {
-            self.repository.create_tag(&tag, disable_bump_commit)?;
+            self.repository
+                .create_tag(&bump_res.next, disable_bump_commit)?;
         }
 
         // Run per package post hooks
@@ -243,10 +242,8 @@ impl CocoGitto {
 
         let bump_res = opts.get_new_version(&self.repository, false, None)?;
 
-        let tag = Tag::create(bump_res.next.version.clone(), None);
-
         if opts.dry_run {
-            print!("{tag}");
+            print!("{}", bump_res.next);
             return Ok(());
         }
 
@@ -266,7 +263,7 @@ impl CocoGitto {
             let changelog = self.get_monorepo_global_changelog_for_version(
                 pattern,
                 bump_res.current.clone().into(),
-                tag.clone(),
+                bump_res.next.clone(),
             )?;
 
             changelog.pretty_print_bump_summary()?;
@@ -313,12 +310,13 @@ impl CocoGitto {
         if let Some(msg_tmpl) = opts.annotated {
             let mut context = tera::Context::new();
             context.insert("latest", &bump_res.current.version.to_string());
-            context.insert("version", &tag.version.to_string());
+            context.insert("version", &bump_res.next.version.to_string());
             let msg = Tera::one_off(&msg_tmpl, &context, false)?;
             self.repository
-                .create_annotated_tag(&tag, &msg, disable_bump_commit)?;
+                .create_annotated_tag(&bump_res.next, &msg, disable_bump_commit)?;
         } else {
-            self.repository.create_tag(&tag, disable_bump_commit)?;
+            self.repository
+                .create_tag(&bump_res.next, disable_bump_commit)?;
         }
 
         // Run global post hooks
