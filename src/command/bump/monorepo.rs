@@ -12,10 +12,10 @@ use crate::conventional::version::IncrementCommand;
 use crate::git::error::TagError;
 use crate::git::tag::Tag;
 use crate::settings::{HookType, MonoRepoPackage};
-use crate::{settings, CocoGitto, SETTINGS};
+use crate::{CocoGitto, SETTINGS};
 use anyhow::{bail, Result};
 
-use log::{info, warn};
+use log::warn;
 
 use crate::git::oid::ReleaseVersion;
 
@@ -138,28 +138,13 @@ impl CocoGitto {
         }
         template_context.sort_by_key(|package| package.package_name);
 
-        if !SETTINGS.disable_changelog {
-            let pattern = self.get_bump_revspec(&bump_res.current);
-            let changelog = self.get_monorepo_global_changelog_for_version(
-                pattern,
-                bump_res.current.clone().into(),
-                bump_res.next.clone(),
-            )?;
-
-            changelog.pretty_print_bump_summary()?;
-
-            let path = settings::changelog_path();
-            let template = SETTINGS.get_monorepo_changelog_template()?;
-
-            changelog.write_to_file(
-                path,
-                template,
-                ReleaseType::MonoRepo(MonoRepoContext {
-                    package_lock: false,
-                    packages: template_context,
-                }),
-            )?;
-        }
+        self.render_changelog(
+            &bump_res,
+            ReleaseType::MonoRepo(MonoRepoContext {
+                package_lock: false,
+                packages: template_context,
+            }),
+        )?;
 
         let hook_result = self.run_hooks(Some(&bump_res), HookType::PreBump, opts.hooks_config);
 
@@ -211,28 +196,13 @@ impl CocoGitto {
         }
         template_context.sort_by_key(|package| package.package_name);
 
-        if !SETTINGS.disable_changelog {
-            let pattern = self.get_bump_revspec(&bump_res.current);
-            let changelog = self.get_monorepo_global_changelog_for_version(
-                pattern,
-                bump_res.current.clone().into(),
-                bump_res.next.clone(),
-            )?;
-
-            changelog.pretty_print_bump_summary()?;
-
-            let path = settings::changelog_path();
-            let template = SETTINGS.get_monorepo_changelog_template()?;
-
-            changelog.write_to_file(
-                path,
-                template,
-                ReleaseType::MonoRepo(MonoRepoContext {
-                    package_lock: true,
-                    packages: template_context,
-                }),
-            )?;
-        }
+        self.render_changelog(
+            &bump_res,
+            ReleaseType::MonoRepo(MonoRepoContext {
+                package_lock: true,
+                packages: template_context,
+            }),
+        )?;
 
         let hook_result = self.run_hooks(Some(&bump_res), HookType::PreBump, opts.hooks_config);
 
@@ -299,26 +269,12 @@ impl CocoGitto {
         package_bumps: &Vec<BumpResult<WithPkg>>,
     ) -> Result<()> {
         for bump in package_bumps {
-            if !SETTINGS.disable_changelog {
-                let pattern = self.get_bump_revspec(&bump.current);
-                let changelog = self.get_package_changelog_with_target_version(
-                    pattern,
-                    bump.next.clone(),
-                    bump.package.0,
-                )?;
-
-                changelog.pretty_print_bump_summary()?;
-
-                let path = bump.package.1.changelog_path();
-                let template = SETTINGS.get_package_changelog_template()?;
-
-                let additional_context = ReleaseType::Package(PackageContext {
+            self.render_changelog(
+                bump,
+                ReleaseType::Package(PackageContext {
                     package_name: bump.package.0,
-                });
-
-                changelog.write_to_file(&path, template, additional_context)?;
-                info!("\tChangelog updated {:?}", path);
-            }
+                }),
+            )?;
 
             let hook_result = self.run_hooks(Some(bump), HookType::PreBump, hooks_config);
 

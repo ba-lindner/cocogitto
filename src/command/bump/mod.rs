@@ -1,7 +1,8 @@
 use crate::conventional::changelog::release::Release;
+use crate::conventional::changelog::template::PackageContext;
+use crate::conventional::changelog::ReleaseType;
 use crate::conventional::commit::Commit;
 use crate::git::error::TagError;
-use crate::git::oid::ReleaseVersion;
 
 use crate::conventional::error::BumpError as ConvBumpError;
 use crate::conventional::version::{Increment, IncrementCommand};
@@ -10,7 +11,7 @@ use crate::git::rev::filters::CommitFilter;
 use crate::git::rev::revspec::RevSpecPattern2;
 use crate::git::tag::Tag;
 use crate::hook::{Hook, Hooks};
-use crate::settings::{HookType, MonoRepoPackage, Settings};
+use crate::settings::{self, HookType, MonoRepoPackage, Settings};
 use crate::BumpError;
 use crate::{CocoGitto, COMMITS_METADATA, SETTINGS};
 use anyhow::Result;
@@ -173,15 +174,6 @@ impl<'a, P> BumpOptions<'a, P> {
 }
 
 impl CocoGitto {
-    fn get_bump_revspec(&mut self, current_tag: &Tag) -> RevSpecPattern2 {
-        if current_tag.is_zero() {
-            RevSpecPattern2::full()
-        } else {
-            // this function is always called with the latest tag, so it should always have a oid
-            RevSpecPattern2::from(*current_tag.oid_unchecked())
-        }
-    }
-
     pub fn unwrap_or_stash_and_exit<T>(&mut self, tag: &Tag, result: Result<T>) -> T {
         match result {
             Ok(res) => res,
@@ -247,59 +239,62 @@ impl CocoGitto {
     /// The target version is not created yet when generating the changelog.
     pub fn get_changelog_with_target_version(
         &self,
-        pattern: RevSpecPattern2,
-        tag: Tag,
+        from: Tag,
+        version: Tag,
+        filter: CommitFilter<'_>,
     ) -> Result<Release<'_>> {
-        let commit_range = self.repository.revwalk(pattern)?;
+        let spec = if from.is_zero() {
+            RevSpecPattern2::full()
+        } else {
+            RevSpecPattern2::from(*from.oid_unchecked())
+        };
+        let commit_range = self.repository.revwalk(spec)?.apply_filter(filter)?;
         let mut release = Release::try_from(commit_range)?;
-        release.version = tag.into();
+        release.version = version.into();
         Ok(release)
     }
 
-    /// The target package version is not created yet when generating the changelog.
-    pub fn get_package_changelog_with_target_version(
-        &self,
-        pattern: RevSpecPattern2,
-        tag: Tag,
-        package: &str,
-    ) -> Result<Release<'_>> {
-        let commit_range = self
-            .repository
-            .revwalk(pattern)?
-            .apply_filter(CommitFilter::Package(package))?;
+    fn render_changelog<P: MaybePkg>(&self, bump: &BumpResult<P>, kind: ReleaseType) -> Result<()> {
+        if SETTINGS.disable_changelog {
+            return Ok(());
+        }
 
-        let mut release = Release::try_from(commit_range)?;
-        release.version = tag.into();
-        Ok(release)
-    }
+        let (filter, template) = match kind {
+            ReleaseType::Standard => (CommitFilter::Standard, SETTINGS.get_changelog_template()?),
+            ReleaseType::MonoRepo(_) => (
+                CommitFilter::Global,
+                SETTINGS.get_monorepo_changelog_template()?,
+            ),
+            ReleaseType::Package(PackageContext { package_name }) => (
+                CommitFilter::Package(package_name),
+                SETTINGS.get_package_changelog_template()?,
+            ),
+        };
 
-    /// The target global monorepo version is not created yet when generating the changelog.
-    pub fn get_monorepo_global_changelog_for_version(
-        &self,
-        pattern: RevSpecPattern2,
-        from: ReleaseVersion,
-        tag: Tag,
-    ) -> Result<Release<'_>> {
-        let commit_range = self
-            .repository
-            .revwalk(pattern)?
-            .apply_filter(CommitFilter::Global)?;
-
-        let release = match Release::try_from(commit_range) {
-            Ok(mut release) => {
-                release.version = tag.into();
-                release
-            }
-            Err(_) => Release {
-                version: tag.into(),
-                from,
+        let changelog =
+            self.get_changelog_with_target_version(bump.current.clone(), bump.next.clone(), filter);
+        let changelog = if matches!(kind, ReleaseType::MonoRepo(_)) {
+            changelog.unwrap_or(Release {
+                version: bump.next.clone().into(),
+                from: bump.current.clone().into(),
                 date: Default::default(),
                 commits: vec![],
                 previous: None,
-            },
+            })
+        } else {
+            changelog?
         };
 
-        Ok(release)
+        changelog.pretty_print_bump_summary()?;
+
+        let path = bump
+            .package
+            .maybe_pkg()
+            .map(|(_, package)| package.changelog_path())
+            .unwrap_or(settings::changelog_path().clone());
+        changelog.write_to_file(path, template, kind)?;
+
+        Ok(())
     }
 
     fn run_hooks<P: MaybePkg>(

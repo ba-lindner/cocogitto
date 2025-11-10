@@ -3,7 +3,7 @@ use crate::conventional::changelog::template::PackageContext;
 use crate::conventional::changelog::ReleaseType;
 use crate::git::tag::Tag;
 use crate::settings::HookType;
-use crate::{CocoGitto, SETTINGS};
+use crate::CocoGitto;
 use anyhow::Result;
 use colored::*;
 use log::info;
@@ -23,23 +23,12 @@ impl CocoGitto {
             return Ok(());
         }
 
-        if !SETTINGS.disable_changelog {
-            let pattern = self.get_bump_revspec(&bump_res.current);
-            let changelog = self.get_package_changelog_with_target_version(
-                pattern,
-                bump_res.next.clone(),
-                opts.package.0,
-            )?;
-
-            changelog.pretty_print_bump_summary()?;
-
-            let path = opts.package.1.changelog_path();
-            let template = SETTINGS.get_package_changelog_template()?;
-            let additional_context = ReleaseType::Package(PackageContext {
+        self.render_changelog(
+            &bump_res,
+            ReleaseType::Package(PackageContext {
                 package_name: opts.package.0,
-            });
-            changelog.write_to_file(path, template, additional_context)?;
-        }
+            }),
+        )?;
 
         let hook_result = self.run_hooks(Some(&bump_res), HookType::PreBump, opts.hooks_config);
 
