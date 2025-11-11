@@ -8,7 +8,9 @@ use crate::git::repository::Repository;
 use crate::{get_config_path, SETTINGS};
 
 use crate::conventional::changelog::error::ChangelogError;
-use crate::conventional::changelog::template::{RemoteContext, Template};
+use crate::conventional::changelog::template::{
+    PredefinedTemplate, RemoteContext, Template, TplTarget,
+};
 use crate::hook::Hooks;
 use crate::settings::error::SettingError;
 use config::{Config, File, FileFormat};
@@ -514,45 +516,21 @@ impl Settings {
         RemoteContext::try_new(remote, repository, owner)
     }
 
-    pub fn get_changelog_template(&self) -> Result<Template, ChangelogError> {
-        let context = self.get_template_context();
-        let template = self.changelog.template.as_deref().unwrap_or("default");
+    pub fn get_changelog_template(&self, target: TplTarget) -> Result<Template, ChangelogError> {
+        let template = if target == TplTarget::Package {
+            self.changelog.package_template.as_deref()
+        } else {
+            self.changelog.template.as_deref()
+        }
+        .unwrap_or("default");
+        let mut template = Template::from_arg(template)?;
+        if let Template::Predefined(tpl) = &mut template {
+            if tpl.target == TplTarget::Standard {
+                *tpl = PredefinedTemplate::by_target_and_kind(target, tpl.kind)
+            }
+        }
 
-        Template::from_arg(template, context)
-    }
-
-    pub fn get_package_changelog_template(&self) -> Result<Template, ChangelogError> {
-        let context = self.get_template_context();
-        let template = self
-            .changelog
-            .package_template
-            .as_deref()
-            .unwrap_or("package_default");
-
-        let template = match template {
-            "remote" => "package_remote",
-            "full_hash" => "package_full_hash",
-            template => template,
-        };
-
-        Template::from_arg(template, context)
-    }
-
-    pub fn get_monorepo_changelog_template(&self) -> Result<Template, ChangelogError> {
-        let context = self.get_template_context();
-        let template = self
-            .changelog
-            .template
-            .as_deref()
-            .unwrap_or("monorepo_default");
-
-        let template = match template {
-            "remote" => "monorepo_remote",
-            "full_hash" => "monorepo_full_hash",
-            template => template,
-        };
-
-        Template::from_arg(template, context)
+        Ok(template)
     }
 
     pub fn monorepo_separator(&self) -> Option<&str> {

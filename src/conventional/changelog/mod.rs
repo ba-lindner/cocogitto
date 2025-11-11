@@ -2,14 +2,14 @@ use crate::conventional::changelog::release::Release;
 use crate::conventional::changelog::renderer::Renderer;
 
 use crate::conventional::changelog::error::ChangelogError;
-use crate::conventional::changelog::template::{MonoRepoContext, PackageContext, Template};
+use crate::conventional::changelog::template::{MonoRepoContext, PackageContext};
 
 use std::fs;
 use std::path::Path;
 
 pub mod error;
 pub(crate) mod release;
-pub(crate) mod renderer;
+pub mod renderer;
 pub(crate) mod serde;
 pub mod template;
 
@@ -34,14 +34,12 @@ pub struct Changelog<'r> {
 }
 
 impl Changelog<'_> {
-    pub fn into_markdown(self, template: Template) -> Result<String, tera::Error> {
-        let renderer = Renderer::try_new(template)?;
-
-        let mut renderer = match self.context {
-            ReleaseType::Standard => renderer,
-            ReleaseType::MonoRepo(context) => renderer.with_monorepo_context(context),
-            ReleaseType::Package(context) => renderer.with_package_context(context),
-        };
+    pub fn into_markdown(self, mut renderer: Renderer) -> Result<String, tera::Error> {
+        match self.context {
+            ReleaseType::Standard => {}
+            ReleaseType::MonoRepo(context) => renderer.add_context(context),
+            ReleaseType::Package(context) => renderer.add_context(context),
+        }
 
         renderer.render(&self.releases)
     }
@@ -49,12 +47,12 @@ impl Changelog<'_> {
     pub fn write_to_file<S: AsRef<Path>>(
         self,
         path: S,
-        template: Template,
+        renderer: Renderer,
     ) -> Result<(), ChangelogError> {
         let mut changelog_content = fs::read_to_string(path.as_ref())
             .unwrap_or_else(|_| [DEFAULT_HEADER, DEFAULT_FOOTER].join(""));
 
-        let changelog = self.into_markdown(template)?;
+        let changelog = self.into_markdown(renderer)?;
         let separator_idx = changelog_content.find(CHANGELOG_SEPARATOR);
 
         if let Some(idx) = separator_idx {

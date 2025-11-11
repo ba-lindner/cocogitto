@@ -4,7 +4,8 @@ mod mangen;
 use std::fs;
 use std::path::PathBuf;
 
-use cocogitto::conventional::changelog::template::{RemoteContext, Template};
+use cocogitto::conventional::changelog::renderer::Renderer;
+use cocogitto::conventional::changelog::template::{RemoteContext, Template, TplTarget};
 use cocogitto::conventional::commit as conv_commit;
 use cocogitto::conventional::version::IncrementCommand;
 
@@ -637,10 +638,20 @@ fn main() -> Result<()> {
                 .or_else(|| SETTINGS.get_template_context());
             let template = template.as_ref().or(SETTINGS.changelog.template.as_ref());
             let template = if let Some(template) = template {
-                Template::from_arg(template, context)?
+                Template::from_arg(template)?
             } else {
-                Template::fallback(unified)
+                Template::default_for_target(if SETTINGS.packages.is_empty() {
+                    TplTarget::Standard
+                } else if unified {
+                    TplTarget::Unified
+                } else {
+                    TplTarget::Monorepo
+                })
             };
+            let mut renderer = Renderer::try_new(template)?;
+            if let Some(context) = context {
+                renderer.add_context(context);
+            }
 
             // TODO: fallback to tag here
             let pattern = at.as_deref().or(pattern.as_deref()).unwrap_or("..");
@@ -652,7 +663,7 @@ fn main() -> Result<()> {
                 // TODO: enforce single-version changelogs with --at
                 cocogitto.get_monorepo_changelog(pattern, unified, true)?
             };
-            println!("{}", release.into_markdown(template)?);
+            println!("{}", release.into_markdown(renderer)?);
         }
         Command::Init { path } => {
             cocogitto::command::init::init(&path)?;

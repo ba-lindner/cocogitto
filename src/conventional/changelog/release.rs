@@ -103,7 +103,8 @@ mod test {
     use crate::conventional::changelog::release::{ChangelogCommit, Release};
     use crate::conventional::changelog::renderer::Renderer;
     use crate::conventional::changelog::template::{
-        MonoRepoContext, PackageBumpContext, PackageContext, RemoteContext, Template, TemplateKind,
+        MonoRepoContext, PackageBumpContext, PackageContext, PredefinedTemplate, RemoteContext,
+        Template,
     };
     use crate::conventional::commit::Commit;
     use crate::git::repository::Repository;
@@ -135,7 +136,7 @@ mod test {
     fn should_render_default_template() -> Result<()> {
         // Arrange
         let release = Release::fixture();
-        let mut renderer = Renderer::default();
+        let renderer = Renderer::default();
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -159,10 +160,7 @@ mod test {
     fn should_render_full_hash_template() -> Result<()> {
         // Arrange
         let release = Release::fixture();
-        let mut renderer = Renderer::try_new(Template {
-            remote_context: None,
-            kind: TemplateKind::FullHash,
-        })?;
+        let renderer = Renderer::try_new(Template::Predefined(PredefinedTemplate::FULL_HASH))?;
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -186,14 +184,15 @@ mod test {
     fn should_render_github_template() -> Result<()> {
         // Arrange
         let release = Release::fixture();
-        let mut renderer = Renderer::try_new(Template {
-            remote_context: RemoteContext::try_new(
+        let mut renderer = Renderer::try_new(Template::Predefined(PredefinedTemplate::REMOTE))?;
+        renderer.add_context(
+            RemoteContext::try_new(
                 Some("github.com".into()),
                 Some("cocogitto".into()),
                 Some("cocogitto".into()),
-            ),
-            kind: TemplateKind::Remote,
-        })?;
+            )
+            .unwrap(),
+        );
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -217,12 +216,9 @@ mod test {
     fn should_render_template_monorepo() -> Result<()> {
         // Arrange
         let release = Release::fixture();
-        let renderer = Renderer::try_new(Template {
-            remote_context: None,
-            kind: TemplateKind::MonorepoDefault,
-        })?;
-
-        let mut renderer = monorepo_renderer(renderer)?;
+        let mut renderer =
+            Renderer::try_new(Template::Predefined(PredefinedTemplate::MONOERPO_DEFAULT))?;
+        renderer.add_context(MonoRepoContext::fixture());
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -250,12 +246,9 @@ mod test {
     fn should_render_template_monorepo_for_manual_bump() -> Result<()> {
         // Arrange
         let release = Release::fixture();
-        let renderer = Renderer::try_new(Template {
-            remote_context: None,
-            kind: TemplateKind::MonorepoDefault,
-        })?;
-
-        let mut renderer = monorepo_manual_bump_renderer(renderer)?;
+        let mut renderer =
+            Renderer::try_new(Template::Predefined(PredefinedTemplate::MONOERPO_DEFAULT))?;
+        renderer.add_context(MonoRepoContext::fixture_manual());
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -283,12 +276,9 @@ mod test {
     fn should_render_full_hash_template_monorepo() -> Result<()> {
         // Arrange
         let release = Release::fixture();
-        let renderer = Renderer::try_new(Template {
-            remote_context: None,
-            kind: TemplateKind::MonorepoFullHash,
-        })?;
-
-        let mut renderer = monorepo_renderer(renderer)?;
+        let mut renderer =
+            Renderer::try_new(Template::Predefined(PredefinedTemplate::MONOERPO_FULL_HASH))?;
+        renderer.add_context(MonoRepoContext::fixture());
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -316,12 +306,9 @@ mod test {
     fn should_render_full_hash_template_manual_monorepo() -> Result<()> {
         // Arrange
         let release = Release::fixture();
-        let renderer = Renderer::try_new(Template {
-            remote_context: None,
-            kind: TemplateKind::MonorepoFullHash,
-        })?;
-
-        let mut renderer = monorepo_manual_bump_renderer(renderer)?;
+        let mut renderer =
+            Renderer::try_new(Template::Predefined(PredefinedTemplate::MONOERPO_FULL_HASH))?;
+        renderer.add_context(MonoRepoContext::fixture_manual());
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -349,16 +336,10 @@ mod test {
     fn should_render_remote_template_monorepo() -> Result<()> {
         // Arrange
         let release = Release::fixture();
-        let renderer = Renderer::try_new(Template {
-            remote_context: RemoteContext::try_new(
-                Some("github.com".into()),
-                Some("cocogitto".into()),
-                Some("cocogitto".into()),
-            ),
-            kind: TemplateKind::MonorepoRemote,
-        })?;
-
-        let mut renderer = monorepo_renderer(renderer)?;
+        let mut renderer =
+            Renderer::try_new(Template::Predefined(PredefinedTemplate::MONOERPO_REMOTE))?;
+        renderer.add_context(RemoteContext::fixture());
+        renderer.add_context(MonoRepoContext::fixture());
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -386,12 +367,9 @@ mod test {
     fn should_render_template_package() -> Result<()> {
         // Arrange
         let release = Release::fixture();
-        let renderer = Renderer::try_new(Template {
-            remote_context: None,
-            kind: TemplateKind::PackageDefault,
-        })?;
-
-        let mut renderer = package_renderer(renderer)?;
+        let mut renderer =
+            Renderer::try_new(Template::Predefined(PredefinedTemplate::PACKAGE_DEFAULT))?;
+        renderer.add_context(PackageContext::fixture());
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -415,12 +393,9 @@ mod test {
     fn should_render_full_hash_template_package() -> Result<()> {
         // Arrange
         let release = Release::fixture();
-        let renderer = Renderer::try_new(Template {
-            remote_context: None,
-            kind: TemplateKind::PackageFullHash,
-        })?;
-
-        let mut renderer = package_renderer(renderer)?;
+        let mut renderer =
+            Renderer::try_new(Template::Predefined(PredefinedTemplate::PACKAGE_FULL_HASH))?;
+        renderer.add_context(PackageContext::fixture());
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -444,16 +419,10 @@ mod test {
     fn should_render_remote_template_package() -> Result<()> {
         // Arrange
         let release = Release::fixture();
-        let renderer = Renderer::try_new(Template {
-            remote_context: RemoteContext::try_new(
-                Some("github.com".into()),
-                Some("cocogitto".into()),
-                Some("cocogitto".into()),
-            ),
-            kind: TemplateKind::PackageRemote,
-        })?;
-
-        let mut renderer = package_renderer(renderer)?;
+        let mut renderer =
+            Renderer::try_new(Template::Predefined(PredefinedTemplate::PACKAGE_REMOTE))?;
+        renderer.add_context(RemoteContext::fixture());
+        renderer.add_context(PackageContext::fixture());
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -477,16 +446,10 @@ mod test {
     fn should_render_remote_template_monorepo_for_manual_bump() -> Result<()> {
         // Arrange
         let release = Release::fixture();
-        let renderer = Renderer::try_new(Template {
-            remote_context: RemoteContext::try_new(
-                Some("github.com".into()),
-                Some("cocogitto".into()),
-                Some("cocogitto".into()),
-            ),
-            kind: TemplateKind::MonorepoRemote,
-        })?;
-
-        let mut renderer = monorepo_manual_bump_renderer(renderer)?;
+        let mut renderer =
+            Renderer::try_new(Template::Predefined(PredefinedTemplate::MONOERPO_REMOTE))?;
+        renderer.add_context(RemoteContext::fixture());
+        renderer.add_context(MonoRepoContext::fixture_manual());
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -515,11 +478,9 @@ mod test {
         // Arrange
         let release = Release::fixture();
 
-        let renderer = Renderer::try_new(Template {
-            remote_context: None,
-            kind: TemplateKind::UnifiedDefault,
-        })?;
-        let mut renderer = monorepo_renderer(renderer)?;
+        let mut renderer =
+            Renderer::try_new(Template::Predefined(PredefinedTemplate::UNIFIED_DEFAULT))?;
+        renderer.add_context(MonoRepoContext::fixture());
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -548,11 +509,9 @@ mod test {
         // Arrange
         let release = Release::fixture();
 
-        let renderer = Renderer::try_new(Template {
-            remote_context: None,
-            kind: TemplateKind::UnifiedFullHash,
-        })?;
-        let mut renderer = monorepo_renderer(renderer)?;
+        let mut renderer =
+            Renderer::try_new(Template::Predefined(PredefinedTemplate::UNIFIED_FULL_HASH))?;
+        renderer.add_context(MonoRepoContext::fixture());
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -580,15 +539,10 @@ mod test {
         // Arrange
         let release = Release::fixture();
 
-        let renderer = Renderer::try_new(Template {
-            remote_context: RemoteContext::try_new(
-                Some("github.com".into()),
-                Some("cocogitto".into()),
-                Some("cocogitto".into()),
-            ),
-            kind: TemplateKind::UnifiedRemote,
-        })?;
-        let mut renderer = monorepo_renderer(renderer)?;
+        let mut renderer =
+            Renderer::try_new(Template::Predefined(PredefinedTemplate::UNIFIED_REMOTE))?;
+        renderer.add_context(RemoteContext::fixture());
+        renderer.add_context(MonoRepoContext::fixture());
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -698,87 +652,112 @@ mod test {
         }
     }
 
-    fn monorepo_renderer(renderer: Renderer) -> Result<Renderer> {
-        let renderer = renderer.with_monorepo_context(MonoRepoContext {
-            package_lock: false,
-            packages: vec![
-                PackageBumpContext {
-                    package_name: "one",
-                    package_path: Path::new("crates/one"),
-                    version: Tag::from_str(
-                        "0.1.0",
-                        Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
-                    )?
-                    .into(),
-                    from: Some(
-                        Tag::from_str(
+    impl RemoteContext {
+        fn fixture() -> Self {
+            RemoteContext::try_new(
+                Some("github.com".into()),
+                Some("cocogitto".into()),
+                Some("cocogitto".into()),
+            )
+            .unwrap()
+        }
+    }
+
+    impl MonoRepoContext<'_> {
+        fn fixture() -> Self {
+            MonoRepoContext {
+                package_lock: false,
+                packages: vec![
+                    PackageBumpContext {
+                        package_name: "one",
+                        package_path: Path::new("crates/one"),
+                        version: Tag::from_str(
+                            "0.1.0",
+                            Some(
+                                Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap(),
+                            ),
+                        )
+                        .unwrap()
+                        .into(),
+                        from: Some(
+                            Tag::from_str(
+                                "0.2.0",
+                                Some(
+                                    Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60")
+                                        .unwrap(),
+                                ),
+                            )
+                            .unwrap()
+                            .into(),
+                        ),
+                    },
+                    PackageBumpContext {
+                        package_name: "two",
+                        package_path: Path::new("crates/two"),
+                        version: Tag::from_str(
                             "0.2.0",
                             Some(
                                 Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap(),
                             ),
-                        )?
+                        )
+                        .unwrap()
                         .into(),
-                    ),
-                },
-                PackageBumpContext {
-                    package_name: "two",
-                    package_path: Path::new("crates/two"),
-                    version: Tag::from_str(
-                        "0.2.0",
-                        Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
-                    )?
-                    .into(),
-                    from: Some(
-                        Tag::from_str(
-                            "0.3.0",
+                        from: Some(
+                            Tag::from_str(
+                                "0.3.0",
+                                Some(
+                                    Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60")
+                                        .unwrap(),
+                                ),
+                            )
+                            .unwrap()
+                            .into(),
+                        ),
+                    },
+                ],
+            }
+        }
+
+        fn fixture_manual() -> Self {
+            MonoRepoContext {
+                package_lock: true,
+                packages: vec![
+                    PackageBumpContext {
+                        package_name: "one",
+                        package_path: Path::new("crates/one"),
+                        version: Tag::from_str(
+                            "0.1.0",
                             Some(
                                 Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap(),
                             ),
-                        )?
+                        )
+                        .unwrap()
                         .into(),
-                    ),
-                },
-            ],
-        });
-
-        Ok(renderer)
+                        from: None,
+                    },
+                    PackageBumpContext {
+                        package_name: "two",
+                        package_path: Path::new("crates/two"),
+                        version: Tag::from_str(
+                            "0.2.0",
+                            Some(
+                                Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap(),
+                            ),
+                        )
+                        .unwrap()
+                        .into(),
+                        from: None,
+                    },
+                ],
+            }
+        }
     }
 
-    fn monorepo_manual_bump_renderer(renderer: Renderer) -> Result<Renderer> {
-        let renderer = renderer.with_monorepo_context(MonoRepoContext {
-            package_lock: true,
-            packages: vec![
-                PackageBumpContext {
-                    package_name: "one",
-                    package_path: Path::new("crates/one"),
-                    version: Tag::from_str(
-                        "0.1.0",
-                        Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
-                    )?
-                    .into(),
-                    from: None,
-                },
-                PackageBumpContext {
-                    package_name: "two",
-                    package_path: Path::new("crates/two"),
-                    version: Tag::from_str(
-                        "0.2.0",
-                        Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
-                    )?
-                    .into(),
-                    from: None,
-                },
-            ],
-        });
-
-        Ok(renderer)
-    }
-
-    fn package_renderer(renderer: Renderer) -> Result<Renderer> {
-        let renderer = renderer.with_package_context(PackageContext {
-            package_name: "one",
-        });
-
-        Ok(renderer)
+    impl PackageContext<'_> {
+        fn fixture() -> Self {
+            PackageContext {
+                package_name: "one",
+            }
+        }
     }
 }

@@ -4,8 +4,7 @@ use tera::{dotted_pointer, to_value, try_get_value, Context, Tera, Value};
 
 use crate::conventional::changelog::release::Release;
 use crate::conventional::changelog::template::{
-    MonoRepoContext, PackageContext, RemoteContext, Template, ToContext, MACROS_TEMPLATE,
-    MACROS_TEMPLATE_NAME,
+    Template, ToContext, MACROS_TEMPLATE, MACROS_TEMPLATE_NAME,
 };
 
 #[derive(Debug)]
@@ -24,14 +23,9 @@ impl Default for Renderer {
 impl Renderer {
     pub fn try_new(template: Template) -> Result<Self, tera::Error> {
         let mut tera = Tera::default();
-        let content = template.kind.get()?;
-        let content = String::from_utf8_lossy(content.as_slice());
 
-        tera.add_raw_template(
-            MACROS_TEMPLATE_NAME,
-            String::from_utf8_lossy(MACROS_TEMPLATE).as_ref(),
-        )?;
-        tera.add_raw_template(template.kind.name(), content.as_ref())?;
+        tera.add_raw_template(MACROS_TEMPLATE_NAME, MACROS_TEMPLATE)?;
+        tera.add_raw_template(template.name(), template.content())?;
         tera.register_filter("upper_first", Self::upper_first_filter);
         tera.register_filter("unscoped", Self::unscoped);
         tera.register_filter("group_by_type", Self::group_by_type);
@@ -44,17 +38,11 @@ impl Renderer {
         })
     }
 
-    pub(crate) fn with_package_context(mut self, context: PackageContext) -> Self {
+    pub fn add_context(&mut self, context: impl ToContext) {
         self.context.extend(context.to_context());
-        self
     }
 
-    pub(crate) fn with_monorepo_context(mut self, context: MonoRepoContext) -> Self {
-        self.context.extend(context.to_context());
-        self
-    }
-
-    pub(crate) fn render(&mut self, version: &[Release]) -> Result<String, tera::Error> {
+    pub(crate) fn render(&self, version: &[Release]) -> Result<String, tera::Error> {
         let Some(first) = version.first() else {
             return Ok(String::new());
         };
@@ -67,20 +55,11 @@ impl Renderer {
         Ok(release)
     }
 
-    pub(crate) fn render_single(&mut self, version: &Release) -> Result<String, tera::Error> {
-        let release_context = Context::from_serialize(version)?;
-        self.context.extend(release_context);
-        let context = self
-            .template
-            .remote_context
-            .as_ref()
-            .map(RemoteContext::to_context);
+    pub(crate) fn render_single(&self, version: &Release) -> Result<String, tera::Error> {
+        let mut context = self.context.clone();
+        context.extend(Context::from_serialize(version)?);
 
-        if let Some(context) = context {
-            self.context.extend(context);
-        }
-
-        self.tera.render(self.template.kind.name(), &self.context)
+        self.tera.render(self.template.name(), &context)
     }
 
     // From git-cliff: https://github.com/orhun/git-cliff/blob/main/git-cliff-core/src/template.rs

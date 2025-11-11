@@ -1,4 +1,6 @@
 use crate::conventional::changelog::release::Release;
+use crate::conventional::changelog::renderer::Renderer;
+use crate::conventional::changelog::template::TplTarget;
 use crate::conventional::changelog::{Changelog, ReleaseType};
 use crate::conventional::commit::Commit;
 use crate::git::error::TagError;
@@ -273,11 +275,15 @@ impl CocoGitto {
 
         changelog.pretty_print_bump_summary()?;
 
-        let template = match kind {
-            ReleaseType::Standard => SETTINGS.get_changelog_template()?,
-            ReleaseType::MonoRepo(_) => SETTINGS.get_monorepo_changelog_template()?,
-            ReleaseType::Package(_) => SETTINGS.get_package_changelog_template()?,
-        };
+        let template = SETTINGS.get_changelog_template(match kind {
+            ReleaseType::Standard => TplTarget::Standard,
+            ReleaseType::MonoRepo(_) => TplTarget::Monorepo,
+            ReleaseType::Package(_) => TplTarget::Package,
+        })?;
+        let mut renderer = Renderer::try_new(template)?;
+        if let Some(context) = SETTINGS.get_template_context() {
+            renderer.add_context(context);
+        }
         let path = bump
             .package
             .maybe_pkg()
@@ -287,7 +293,7 @@ impl CocoGitto {
             releases: vec![changelog],
             context: kind,
         };
-        changelog.write_to_file(path, template)?;
+        changelog.write_to_file(path, renderer)?;
 
         Ok(())
     }
