@@ -1,6 +1,6 @@
+use crate::conventional::changelog::release::PackageBump;
 use crate::conventional::changelog::release::Release;
 use crate::conventional::changelog::template::MonoRepoContext;
-use crate::conventional::changelog::template::PackageBumpContext;
 use crate::conventional::changelog::Changelog;
 
 use crate::conventional::changelog::ReleaseType;
@@ -18,10 +18,10 @@ impl CocoGitto {
         let commit_range = self
             .repository
             .revwalk(self.repository.revspec_from_str(pattern)?)?;
-        Self::build_release(&commit_range, with_child_releases, ReleaseType::Standard)
+        Self::build_changelog(&commit_range, with_child_releases, ReleaseType::Standard)
     }
 
-    fn build_release<'r>(
+    fn build_changelog<'r>(
         commits: &'_ CommitIter,
         with_child_releases: bool,
         context: ReleaseType<'r>,
@@ -61,7 +61,7 @@ impl CocoGitto {
 
             let (from, version) = range.version_range();
 
-            let context = PackageBumpContext {
+            let context = PackageBump {
                 package_name,
                 package_path,
                 version,
@@ -70,23 +70,26 @@ impl CocoGitto {
 
             packages.push(context);
         }
-        let context = MonoRepoContext {
-            package_lock: false,
-            packages,
-        };
 
-        let filter = if unified {
+        let commit_range = self.repository.revwalk(pattern)?.apply_filter(if unified {
             CommitFilter::Standard
         } else {
             CommitFilter::Global
-        };
-        let commit_range = self.repository.revwalk(pattern)?.apply_filter(filter)?;
+        })?;
 
-        Self::build_release(
+        let mut changelog = Self::build_changelog(
             &commit_range,
             with_child_releases,
-            ReleaseType::MonoRepo(context),
-        )
+            ReleaseType::MonoRepo(MonoRepoContext {
+                package_lock: false,
+            }),
+        )?;
+        // FIXME: get package bump information on a per-release basis
+        // actually difficult to do
+        for release in &mut changelog.releases {
+            release.packages = packages.clone();
+        }
+        Ok(changelog)
     }
 
     pub fn get_changelog_at_tag(&self, tag: &str) -> Result<Changelog<'_>> {

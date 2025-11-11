@@ -2,9 +2,8 @@ use std::path::Path;
 
 use crate::command::bump::{BumpOptions, BumpResult, WithPkg};
 
-use crate::conventional::changelog::template::{
-    MonoRepoContext, PackageBumpContext, PackageContext,
-};
+use crate::conventional::changelog::release::PackageBump;
+use crate::conventional::changelog::template::{MonoRepoContext, PackageContext};
 use crate::conventional::changelog::ReleaseType;
 
 use crate::conventional::version::{Increment, IncrementCommand};
@@ -121,28 +120,28 @@ impl CocoGitto {
             return Ok(());
         }
 
-        let mut template_context = vec![];
         for bump in &bumps {
-            template_context.push(PackageBumpContext {
+            let from = if bump.current.is_zero() {
+                ReleaseVersion::new(self.repository.get_cache().first)
+            } else {
+                bump.current.clone().into()
+            };
+            bump_res.release.packages.push(PackageBump {
                 package_name: bump.package.0,
                 package_path: &bump.package.1.path,
                 version: bump.next.clone().into(),
-                from: Some(bump.current.clone())
-                    .filter(|tag| !tag.is_zero())
-                    .map(Into::into)
-                    .or_else(|| {
-                        let first = self.repository.get_cache().first;
-                        Some(ReleaseVersion::new(first))
-                    }),
+                from: Some(from),
             })
         }
-        template_context.sort_by_key(|package| package.package_name);
+        bump_res
+            .release
+            .packages
+            .sort_by_key(|package| package.package_name);
 
         self.render_changelog(
-            &mut bump_res,
+            &bump_res,
             ReleaseType::MonoRepo(MonoRepoContext {
                 package_lock: false,
-                packages: template_context,
             }),
         )?;
 
@@ -185,23 +184,22 @@ impl CocoGitto {
             return Ok(());
         }
 
-        let mut template_context = vec![];
         for bump in &bumps {
-            template_context.push(PackageBumpContext {
+            bump_res.release.packages.push(PackageBump {
                 package_name: bump.package_name,
                 package_path: bump.package_path,
                 version: bump.version.clone().into(),
                 from: None,
             })
         }
-        template_context.sort_by_key(|package| package.package_name);
+        bump_res
+            .release
+            .packages
+            .sort_by_key(|package| package.package_name);
 
         self.render_changelog(
-            &mut bump_res,
-            ReleaseType::MonoRepo(MonoRepoContext {
-                package_lock: true,
-                packages: template_context,
-            }),
+            &bump_res,
+            ReleaseType::MonoRepo(MonoRepoContext { package_lock: true }),
         )?;
 
         let hook_result = self.run_hooks(Some(&bump_res), HookType::PreBump, opts.hooks_config);

@@ -1,7 +1,7 @@
 use crate::conventional::changelog::release::Release;
 use crate::conventional::changelog::renderer::Renderer;
 use crate::conventional::changelog::template::TplTarget;
-use crate::conventional::changelog::{Changelog, ReleaseType};
+use crate::conventional::changelog::ReleaseType;
 use crate::conventional::commit::Commit;
 use crate::git::error::TagError;
 
@@ -68,7 +68,7 @@ pub struct BumpOptions<'a, P = ()> {
 struct BumpResult<P = ()> {
     current: Tag,
     next: Tag,
-    release: Option<Release<'static>>,
+    release: Release<'static>,
     package: P,
 }
 
@@ -111,7 +111,7 @@ impl<'a, P> BumpOptions<'a, P> {
             IncrementCommand::AutoPackage(package) => CommitFilter::Package(package),
             _ => CommitFilter::Standard,
         };
-        let commits = repository
+        let mut commits = repository
             .commits_since_tag(&current)?
             .apply_filter(bump_filter)?;
         let mut next = match current.bump(&increment, &commits) {
@@ -150,27 +150,26 @@ impl<'a, P> BumpOptions<'a, P> {
             );
         }
 
-        let release_filter = if let Some(package) = package {
+        if let Some(prerelease) = &current_prerelease {
+            if !next.version.pre.is_empty() {
+                commits = repository.commits_since_tag(prerelease)?;
+            }
+        }
+        commits = commits.apply_filter(if let Some(package) = package {
             CommitFilter::Package(package)
         } else if SETTINGS.packages.is_empty() {
             CommitFilter::Standard
         } else {
             CommitFilter::Global
-        };
-        let release = Release::build(&commits.apply_filter(release_filter)?);
-        let release = match release {
-            Ok(mut release) => {
-                release.version = next.clone().into();
-                Some(release)
-            }
-            Err(_) if release_filter == CommitFilter::Global => Some(Release {
-                version: next.clone().into(),
-                from: current.clone().into(),
-                date: Default::default(),
-                commits: vec![],
-            }),
-            Err(_) => None,
-        };
+        })?;
+        let mut release = Release::build(&commits).unwrap_or(Release {
+            version: next.clone().into(),
+            from: current.clone().into(),
+            date: Default::default(),
+            commits: Vec::new(),
+            packages: Vec::new(),
+        });
+        release.version = next.clone().into();
 
         Ok(BumpResult {
             current,
@@ -261,19 +260,12 @@ impl CocoGitto {
         Ok(())
     }
 
-    fn render_changelog<P: MaybePkg>(
-        &self,
-        bump: &mut BumpResult<P>,
-        kind: ReleaseType,
-    ) -> Result<()> {
+    fn render_changelog<P: MaybePkg>(&self, bump: &BumpResult<P>, kind: ReleaseType) -> Result<()> {
         if SETTINGS.disable_changelog {
             return Ok(());
         }
-        let Some(changelog) = bump.release.take() else {
-            panic!("no changelog to render\nthis is a bug, please report it to https://github.com/cocogitto/cocogitto");
-        };
 
-        changelog.pretty_print_bump_summary()?;
+        bump.release.pretty_print_bump_summary()?;
 
         let template = SETTINGS.get_changelog_template(match kind {
             ReleaseType::Standard => TplTarget::Standard,
@@ -289,11 +281,7 @@ impl CocoGitto {
             .maybe_pkg()
             .map(|(_, package)| package.changelog_path())
             .unwrap_or(settings::changelog_path().clone());
-        let changelog = Changelog {
-            releases: vec![changelog],
-            context: kind,
-        };
-        changelog.write_to_file(path, renderer)?;
+        bump.release.write_to_file(path, kind, renderer)?;
 
         Ok(())
     }

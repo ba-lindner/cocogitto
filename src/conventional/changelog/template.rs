@@ -1,9 +1,5 @@
-use crate::conventional::changelog::error::ChangelogError;
+use crate::conventional::changelog::{error::ChangelogError, ReleaseType};
 
-use serde::Serialize;
-
-use crate::git::oid::ReleaseVersion;
-use std::path::Path;
 use tera::Context;
 
 pub const MACROS_TEMPLATE: &str = include_str!("template/macro/macros.tera");
@@ -121,21 +117,12 @@ pub struct RemoteContext {
     owner: String,
 }
 
-#[derive(Debug)]
-pub struct MonoRepoContext<'a> {
+#[derive(Debug, Clone, Copy)]
+pub struct MonoRepoContext {
     pub package_lock: bool,
-    pub packages: Vec<PackageBumpContext<'a>>,
 }
 
-#[derive(Debug, Serialize)]
-pub struct PackageBumpContext<'a> {
-    pub package_name: &'a str,
-    pub package_path: &'a Path,
-    pub version: ReleaseVersion,
-    pub from: Option<ReleaseVersion>,
-}
-
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct PackageContext<'a> {
     pub package_name: &'a str,
 }
@@ -144,11 +131,10 @@ pub trait ToContext {
     fn to_context(&self) -> Context;
 }
 
-impl ToContext for MonoRepoContext<'_> {
+impl ToContext for MonoRepoContext {
     fn to_context(&self) -> Context {
         let mut context = tera::Context::new();
         context.insert("package_lock", &self.package_lock);
-        context.insert("packages", &self.packages);
         context
     }
 }
@@ -158,6 +144,16 @@ impl ToContext for PackageContext<'_> {
         let mut context = tera::Context::new();
         context.insert("package_name", &self.package_name);
         context
+    }
+}
+
+impl ToContext for ReleaseType<'_> {
+    fn to_context(&self) -> Context {
+        match self {
+            ReleaseType::Standard => Context::new(),
+            ReleaseType::MonoRepo(inner) => inner.to_context(),
+            ReleaseType::Package(inner) => inner.to_context(),
+        }
     }
 }
 
