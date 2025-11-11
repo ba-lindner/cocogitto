@@ -58,6 +58,9 @@ impl<'repo> CommitIter<'repo> {
     }
 
     pub(crate) fn apply_filter(mut self, filter: CommitFilter<'repo>) -> Result<Self, Git2Error> {
+        if self.filter == filter {
+            return Ok(self);
+        }
         self.filter = filter;
         let to_retain = self
             .iter_commits()

@@ -6,6 +6,7 @@ use crate::git::repository::Repository;
 use crate::git::rev::filters::CommitFilter;
 use crate::git::rev::revspec::RevSpecPattern2;
 use crate::git::rev::CommitIter;
+use crate::git::tag::Tag;
 
 impl Repository {
     /// Return a commit range from a [`RevSpecPattern2`]
@@ -36,6 +37,15 @@ impl Repository {
             repository: self,
             filter: CommitFilter::Standard,
         })
+    }
+
+    /// a revwalk for with the pattern `{tag}..`
+    pub fn commits_since_tag(&self, tag: &Tag) -> Result<CommitIter<'_>, Git2Error> {
+        let spec = RevSpecPattern2 {
+            from: tag.oid.or_else(|| self.parse_rev(&tag.to_string()).ok()),
+            to: None,
+        };
+        self.revwalk(spec)
     }
 }
 

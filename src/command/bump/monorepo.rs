@@ -7,7 +7,7 @@ use crate::conventional::changelog::template::{
 };
 use crate::conventional::changelog::ReleaseType;
 
-use crate::conventional::version::IncrementCommand;
+use crate::conventional::version::{Increment, IncrementCommand};
 
 use crate::git::error::TagError;
 use crate::git::tag::Tag;
@@ -47,7 +47,7 @@ impl CocoGitto {
     pub fn create_all_package_version_auto(&mut self, opts: BumpOptions) -> Result<()> {
         self.pre_bump_checks(opts.skip_untracked)?;
         // Get package bumps
-        let bumps = self.get_packages_bumps(&opts)?;
+        let mut bumps = self.get_packages_bumps(&opts)?;
 
         if bumps.is_empty() {
             print!("No conventional commits found for your packages that required a bump. Changelogs will be updated on the next bump.\nPre-Hooks and Post-Hooks have been skipped.\n");
@@ -65,7 +65,7 @@ impl CocoGitto {
 
         self.repository.add_all()?;
         self.unwrap_or_stash_and_exit(&Tag::default(), hook_result);
-        self.bump_packages(opts.hooks_config, &bumps)?;
+        self.bump_packages(opts.hooks_config, &mut bumps)?;
 
         self.create_bump_commit(&opts, "bump packages")?;
 
@@ -89,7 +89,7 @@ impl CocoGitto {
     fn create_monorepo_version_auto(&mut self, opts: BumpOptions) -> Result<()> {
         self.pre_bump_checks(opts.skip_untracked)?;
         // Get package bumps
-        let bumps = self.get_packages_bumps(&opts)?;
+        let mut bumps = self.get_packages_bumps(&opts)?;
         if bumps.is_empty() {
             print!("No conventional commits found for your packages that required a bump. Changelogs will be updated on the next bump.\nPre-Hooks and Post-Hooks have been skipped.\n");
             return Ok(());
@@ -111,7 +111,7 @@ impl CocoGitto {
             IncrementCommand::Auto
         };
 
-        let bump_res = opts.get_new_version(&self.repository, false, Some(increment))?;
+        let mut bump_res = opts.get_new_version(&self.repository, false, Some(increment))?;
 
         if opts.dry_run {
             for bump in bumps {
@@ -139,7 +139,7 @@ impl CocoGitto {
         template_context.sort_by_key(|package| package.package_name);
 
         self.render_changelog(
-            &bump_res,
+            &mut bump_res,
             ReleaseType::MonoRepo(MonoRepoContext {
                 package_lock: false,
                 packages: template_context,
@@ -150,7 +150,7 @@ impl CocoGitto {
 
         self.repository.add_all()?;
         self.unwrap_or_stash_and_exit(&bump_res.next, hook_result);
-        self.bump_packages(opts.hooks_config, &bumps)?;
+        self.bump_packages(opts.hooks_config, &mut bumps)?;
 
         self.create_bump_commit(&opts, &bump_res.next)?;
 
@@ -178,7 +178,7 @@ impl CocoGitto {
         // Get package bumps
         let bumps = self.get_current_packages()?;
 
-        let bump_res = opts.get_new_version(&self.repository, false, None)?;
+        let mut bump_res = opts.get_new_version(&self.repository, false, None)?;
 
         if opts.dry_run {
             print!("{}", bump_res.next);
@@ -197,7 +197,7 @@ impl CocoGitto {
         template_context.sort_by_key(|package| package.package_name);
 
         self.render_changelog(
-            &bump_res,
+            &mut bump_res,
             ReleaseType::MonoRepo(MonoRepoContext {
                 package_lock: true,
                 packages: template_context,
@@ -252,7 +252,7 @@ impl CocoGitto {
             let opts = opts.clone().set_package((package_name.as_str(), package));
 
             let bump_res = opts.get_new_version(&self.repository, true, Some(increment))?;
-            if bump_res.no_change() || !bump_res.had_commits {
+            if bump_res.increment() == Increment::NoBump {
                 continue;
             }
 
@@ -266,7 +266,7 @@ impl CocoGitto {
     fn bump_packages(
         &mut self,
         hooks_config: Option<&str>,
-        package_bumps: &Vec<BumpResult<WithPkg>>,
+        package_bumps: &mut Vec<BumpResult<WithPkg>>,
     ) -> Result<()> {
         for bump in package_bumps {
             self.render_changelog(

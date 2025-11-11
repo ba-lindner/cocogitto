@@ -1324,3 +1324,49 @@ fn bump_monorepo_changelog_remote() -> Result<()> {
 
     Ok(())
 }
+
+// currently a bug
+// #[sealed_test]
+// fn no_package_bump_after_prerelease() -> Result<()> {
+//     // given two bumps with --pre
+//     // and package changes only before the first bump (but not the second)
+//     // ensure only the first bump creates a package version
+
+//     // Arrange
+//     git_init()?;
+//     git_add("packages.pkg.path = \"pkg\"", "cog.toml")?;
+//     git_commit("chore: init")?;
+//     git_tag("1.0.0")?;
+//     git_tag("pkg-1.0.0")?;
+//     git_add(".", "pkg/file")?;
+//     git_commit("feat(pkg): package feat")?;
+
+//     Command::cargo_bin("cog")?
+//         .arg("bump")
+//         .arg("--auto")
+//         .arg("--pre")
+//         .arg("rc.1")
+//         .assert()
+//         .success();
+
+//     assert_tag_exists("1.1.0-rc.1")?;
+//     assert_tag_exists("pkg-1.1.0-rc.1")?;
+
+//     git_add(".", "global")?;
+//     git_commit("feat: global feat")?;
+
+//     // Act
+//     Command::cargo_bin("cog")?
+//         .arg("bump")
+//         .arg("--auto")
+//         .arg("--pre")
+//         .arg("rc.2")
+//         .assert()
+//         .success();
+
+//     // Assert
+//     assert_tag_exists("1.1.0-rc.2")?;
+//     assert_tag_does_not_exist("pkg-1.1.0-rc.2")?;
+
+//     Ok(())
+// }

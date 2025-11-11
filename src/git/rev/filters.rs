@@ -123,7 +123,7 @@ impl Repository {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CommitFilter<'p> {
     /// no filtering
     Standard,

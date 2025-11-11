@@ -1,5 +1,4 @@
 use crate::conventional::changelog::release::Release;
-use crate::conventional::changelog::template::PackageContext;
 use crate::conventional::changelog::ReleaseType;
 use crate::conventional::commit::Commit;
 use crate::git::error::TagError;
@@ -8,7 +7,6 @@ use crate::conventional::error::BumpError as ConvBumpError;
 use crate::conventional::version::{Increment, IncrementCommand};
 use crate::git::repository::Repository;
 use crate::git::rev::filters::CommitFilter;
-use crate::git::rev::revspec::RevSpecPattern2;
 use crate::git::tag::Tag;
 use crate::hook::{Hook, Hooks};
 use crate::settings::{self, HookType, MonoRepoPackage, Settings};
@@ -68,15 +66,11 @@ pub struct BumpOptions<'a, P = ()> {
 struct BumpResult<P = ()> {
     current: Tag,
     next: Tag,
-    had_commits: bool,
+    release: Option<Release<'static>>,
     package: P,
 }
 
 impl<P> BumpResult<P> {
-    fn no_change(&self) -> bool {
-        self.current.version == self.next.version
-    }
-
     fn increment(&self) -> Increment {
         self.next
             .get_increment_from(&self.current)
@@ -95,6 +89,7 @@ impl<'a, P> BumpOptions<'a, P> {
         P: MaybePkg,
     {
         let package = self.package.maybe_pkg().unzip().0;
+
         let current = match repository.get_latest_tag(package, false) {
             Ok(tag) => tag,
             Err(TagError::NoTag) => Tag {
@@ -109,11 +104,17 @@ impl<'a, P> BumpOptions<'a, P> {
             .filter(|tag| *tag > current);
 
         let increment = increment.unwrap_or_else(|| self.increment.clone());
-        let (mut next, had_commits) = match current.bump(increment, repository) {
-            Ok(tag) => (tag, true),
-            Err(ConvBumpError::NoCommitFound) if allow_empty => {
-                (current.clone().reset_metadata(), false)
-            }
+        let bump_filter = match &increment {
+            IncrementCommand::AutoMonoRepoGlobal(_) => CommitFilter::Global,
+            IncrementCommand::AutoPackage(package) => CommitFilter::Package(package),
+            _ => CommitFilter::Standard,
+        };
+        let commits = repository
+            .commits_since_tag(&current)?
+            .apply_filter(bump_filter)?;
+        let mut next = match current.bump(&increment, &commits) {
+            Ok(tag) => tag,
+            Err(ConvBumpError::NoCommitFound) if allow_empty => current.clone().reset_metadata(),
             Err(other) => bail!(other),
         };
         assert_eq!(next.package, current.package);
@@ -147,10 +148,33 @@ impl<'a, P> BumpOptions<'a, P> {
             );
         }
 
+        let release_filter = if let Some(package) = package {
+            CommitFilter::Package(package)
+        } else if SETTINGS.packages.is_empty() {
+            CommitFilter::Standard
+        } else {
+            CommitFilter::Global
+        };
+        let release = Release::try_from(commits.apply_filter(release_filter)?);
+        let release = match release {
+            Ok(mut release) => {
+                release.version = next.clone().into();
+                Some(release)
+            }
+            Err(_) if release_filter == CommitFilter::Global => Some(Release {
+                version: next.clone().into(),
+                from: current.clone().into(),
+                date: Default::default(),
+                commits: vec![],
+                previous: None,
+            }),
+            Err(_) => None,
+        };
+
         Ok(BumpResult {
             current,
             next,
-            had_commits,
+            release,
             package: self.package,
         })
     }
@@ -236,57 +260,25 @@ impl CocoGitto {
         Ok(())
     }
 
-    /// The target version is not created yet when generating the changelog.
-    pub fn get_changelog_with_target_version(
+    fn render_changelog<P: MaybePkg>(
         &self,
-        from: Tag,
-        version: Tag,
-        filter: CommitFilter<'_>,
-    ) -> Result<Release<'_>> {
-        let spec = if from.is_zero() {
-            RevSpecPattern2::full()
-        } else {
-            RevSpecPattern2::from(*from.oid_unchecked())
-        };
-        let commit_range = self.repository.revwalk(spec)?.apply_filter(filter)?;
-        let mut release = Release::try_from(commit_range)?;
-        release.version = version.into();
-        Ok(release)
-    }
-
-    fn render_changelog<P: MaybePkg>(&self, bump: &BumpResult<P>, kind: ReleaseType) -> Result<()> {
+        bump: &mut BumpResult<P>,
+        kind: ReleaseType,
+    ) -> Result<()> {
         if SETTINGS.disable_changelog {
             return Ok(());
         }
-
-        let (filter, template) = match kind {
-            ReleaseType::Standard => (CommitFilter::Standard, SETTINGS.get_changelog_template()?),
-            ReleaseType::MonoRepo(_) => (
-                CommitFilter::Global,
-                SETTINGS.get_monorepo_changelog_template()?,
-            ),
-            ReleaseType::Package(PackageContext { package_name }) => (
-                CommitFilter::Package(package_name),
-                SETTINGS.get_package_changelog_template()?,
-            ),
-        };
-
-        let changelog =
-            self.get_changelog_with_target_version(bump.current.clone(), bump.next.clone(), filter);
-        let changelog = if matches!(kind, ReleaseType::MonoRepo(_)) {
-            changelog.unwrap_or(Release {
-                version: bump.next.clone().into(),
-                from: bump.current.clone().into(),
-                date: Default::default(),
-                commits: vec![],
-                previous: None,
-            })
-        } else {
-            changelog?
+        let Some(changelog) = bump.release.take() else {
+            panic!("no changelog to render\nthis is a bug, please report it to https://github.com/cocogitto/cocogitto");
         };
 
         changelog.pretty_print_bump_summary()?;
 
+        let template = match kind {
+            ReleaseType::Standard => SETTINGS.get_changelog_template()?,
+            ReleaseType::MonoRepo(_) => SETTINGS.get_monorepo_changelog_template()?,
+            ReleaseType::Package(_) => SETTINGS.get_package_changelog_template()?,
+        };
         let path = bump
             .package
             .maybe_pkg()

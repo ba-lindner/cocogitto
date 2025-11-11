@@ -21,17 +21,6 @@ pub enum Increment {
     NoBump,
 }
 
-impl From<Increment> for IncrementCommand {
-    fn from(value: Increment) -> Self {
-        match value {
-            Increment::Major => IncrementCommand::Major,
-            Increment::Minor => IncrementCommand::Minor,
-            Increment::Patch => IncrementCommand::Patch,
-            Increment::NoBump => IncrementCommand::NoBump,
-        }
-    }
-}
-
 impl Ord for Increment {
     fn cmp(&self, other: &Self) -> Ordering {
         match (self, other) {
