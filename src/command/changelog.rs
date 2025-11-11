@@ -1,32 +1,45 @@
 use crate::conventional::changelog::release::Release;
 use crate::conventional::changelog::template::MonoRepoContext;
 use crate::conventional::changelog::template::PackageBumpContext;
-use crate::conventional::changelog::template::Template;
+use crate::conventional::changelog::Changelog;
 
 use crate::conventional::changelog::ReleaseType;
 use crate::git::rev::filters::CommitFilter;
+use crate::git::rev::CommitIter;
 use crate::CocoGitto;
 use crate::SETTINGS;
-use anyhow::anyhow;
 use anyhow::Result;
 
 impl CocoGitto {
     /// ## Get a changelog between two oids
     /// - `from` default value:latest tag or else first commit
     /// - `to` default value:`HEAD` or else first commit
-    pub fn get_changelog(&self, pattern: &str, _with_child_releases: bool) -> Result<Release<'_>> {
+    pub fn get_changelog(&self, pattern: &str, with_child_releases: bool) -> Result<Changelog<'_>> {
         let commit_range = self
             .repository
             .revwalk(self.repository.revspec_from_str(pattern)?)?;
-        Release::try_from(commit_range).map_err(Into::into)
+        Self::build_release(&commit_range, with_child_releases, ReleaseType::Standard)
+    }
+
+    fn build_release<'r>(
+        commits: &'_ CommitIter,
+        with_child_releases: bool,
+        context: ReleaseType<'r>,
+    ) -> Result<Changelog<'r>> {
+        let releases = if with_child_releases {
+            Release::build_multi(commits)?
+        } else {
+            vec![Release::build(commits)?]
+        };
+        Ok(Changelog { releases, context })
     }
 
     pub fn get_monorepo_changelog(
         &self,
         pattern: &str,
-        template: Template,
         unified: bool,
-    ) -> Result<String> {
+        with_child_releases: bool,
+    ) -> Result<Changelog<'_>> {
         let mut packages = vec![];
 
         let mut package_data: Vec<_> = SETTINGS
@@ -69,18 +82,14 @@ impl CocoGitto {
         };
         let commit_range = self.repository.revwalk(pattern)?.apply_filter(filter)?;
 
-        let changelog = Release::try_from(commit_range)?;
-
-        changelog
-            .into_markdown(template, ReleaseType::MonoRepo(context))
-            .map_err(Into::into)
+        Self::build_release(
+            &commit_range,
+            with_child_releases,
+            ReleaseType::MonoRepo(context),
+        )
     }
 
-    pub fn get_changelog_at_tag(&self, tag: &str, template: Template) -> Result<String> {
-        let changelog = self.get_changelog(tag, false)?;
-
-        changelog
-            .into_markdown(template, ReleaseType::Standard)
-            .map_err(|err| anyhow!(err))
+    pub fn get_changelog_at_tag(&self, tag: &str) -> Result<Changelog<'_>> {
+        self.get_changelog(tag, false)
     }
 }

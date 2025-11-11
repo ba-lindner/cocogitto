@@ -54,19 +54,20 @@ impl Renderer {
         self
     }
 
-    pub(crate) fn render(&mut self, version: Release) -> Result<String, tera::Error> {
-        let mut release = self.render_release(&version)?;
-        let mut version = version;
-        while let Some(previous) = version.previous.map(|v| *v) {
+    pub(crate) fn render(&mut self, version: &[Release]) -> Result<String, tera::Error> {
+        let Some(first) = version.first() else {
+            return Ok(String::new());
+        };
+        let mut release = self.render_single(first)?;
+        for version in &version[1..] {
             release.push_str("\n- - -\n\n");
-            release.push_str(self.render_release(&previous)?.as_str());
-            version = previous;
+            release.push_str(self.render_single(version)?.as_str());
         }
 
         Ok(release)
     }
 
-    fn render_release(&mut self, version: &Release) -> Result<String, tera::Error> {
+    pub(crate) fn render_single(&mut self, version: &Release) -> Result<String, tera::Error> {
         let release_context = Context::from_serialize(version)?;
         self.context.extend(release_context);
         let context = self

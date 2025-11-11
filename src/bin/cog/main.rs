@@ -5,7 +5,6 @@ use std::fs;
 use std::path::PathBuf;
 
 use cocogitto::conventional::changelog::template::{RemoteContext, Template};
-use cocogitto::conventional::changelog::ReleaseType;
 use cocogitto::conventional::commit as conv_commit;
 use cocogitto::conventional::version::IncrementCommand;
 
@@ -644,19 +643,16 @@ fn main() -> Result<()> {
             };
 
             // TODO: fallback to tag here
-            let pattern = pattern.as_deref().unwrap_or("..");
-            let result = match at {
-                Some(at) => cocogitto.get_changelog_at_tag(&at, template)?,
-                None => {
-                    if !SETTINGS.packages.is_empty() {
-                        cocogitto.get_monorepo_changelog(pattern, template, unified)?
-                    } else {
-                        let changelog = cocogitto.get_changelog(pattern, true)?;
-                        changelog.into_markdown(template, ReleaseType::Standard)?
-                    }
-                }
+            let pattern = at.as_deref().or(pattern.as_deref()).unwrap_or("..");
+            // FIXME: remove second condition
+            let release = if SETTINGS.packages.is_empty() || at.is_some() {
+                // TODO: enforce single-version changelogs with --at
+                cocogitto.get_changelog(pattern, true)?
+            } else {
+                // TODO: enforce single-version changelogs with --at
+                cocogitto.get_monorepo_changelog(pattern, unified, true)?
             };
-            println!("{result}");
+            println!("{}", release.into_markdown(template)?);
         }
         Command::Init { path } => {
             cocogitto::command::init::init(&path)?;

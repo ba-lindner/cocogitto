@@ -28,33 +28,33 @@ pub enum ReleaseType<'a> {
     Package(PackageContext<'a>),
 }
 
-impl Release<'_> {
-    pub fn into_markdown(
-        self,
-        template: Template,
-        context: ReleaseType,
-    ) -> Result<String, tera::Error> {
+pub struct Changelog<'r> {
+    pub releases: Vec<Release<'r>>,
+    pub context: ReleaseType<'r>,
+}
+
+impl Changelog<'_> {
+    pub fn into_markdown(self, template: Template) -> Result<String, tera::Error> {
         let renderer = Renderer::try_new(template)?;
 
-        let mut renderer = match context {
+        let mut renderer = match self.context {
             ReleaseType::Standard => renderer,
             ReleaseType::MonoRepo(context) => renderer.with_monorepo_context(context),
             ReleaseType::Package(context) => renderer.with_package_context(context),
         };
 
-        renderer.render(self)
+        renderer.render(&self.releases)
     }
 
     pub fn write_to_file<S: AsRef<Path>>(
         self,
         path: S,
         template: Template,
-        kind: ReleaseType,
     ) -> Result<(), ChangelogError> {
         let mut changelog_content = fs::read_to_string(path.as_ref())
             .unwrap_or_else(|_| [DEFAULT_HEADER, DEFAULT_FOOTER].join(""));
 
-        let changelog = self.into_markdown(template, kind)?;
+        let changelog = self.into_markdown(template)?;
         let separator_idx = changelog_content.find(CHANGELOG_SEPARATOR);
 
         if let Some(idx) = separator_idx {

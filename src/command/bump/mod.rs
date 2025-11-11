@@ -1,5 +1,5 @@
 use crate::conventional::changelog::release::Release;
-use crate::conventional::changelog::ReleaseType;
+use crate::conventional::changelog::{Changelog, ReleaseType};
 use crate::conventional::commit::Commit;
 use crate::git::error::TagError;
 
@@ -155,7 +155,7 @@ impl<'a, P> BumpOptions<'a, P> {
         } else {
             CommitFilter::Global
         };
-        let release = Release::try_from(commits.apply_filter(release_filter)?);
+        let release = Release::build(&commits.apply_filter(release_filter)?);
         let release = match release {
             Ok(mut release) => {
                 release.version = next.clone().into();
@@ -166,7 +166,6 @@ impl<'a, P> BumpOptions<'a, P> {
                 from: current.clone().into(),
                 date: Default::default(),
                 commits: vec![],
-                previous: None,
             }),
             Err(_) => None,
         };
@@ -284,7 +283,11 @@ impl CocoGitto {
             .maybe_pkg()
             .map(|(_, package)| package.changelog_path())
             .unwrap_or(settings::changelog_path().clone());
-        changelog.write_to_file(path, template, kind)?;
+        let changelog = Changelog {
+            releases: vec![changelog],
+            context: kind,
+        };
+        changelog.write_to_file(path, template)?;
 
         Ok(())
     }

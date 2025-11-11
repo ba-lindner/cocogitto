@@ -108,20 +108,20 @@ mod test {
         let range = range?;
 
         // Act
-        let release = Release::try_from(range)?;
+        let release = Release::build_multi(&range)?;
 
         // Assert
-        assert_that!(release.previous).is_none();
-        assert_that!(release.version.id).is_equal_to(&Oid::from_str(&three)?);
-        assert_that!(release.from.id).is_equal_to(&Oid::from_str(&one)?);
+        assert_that!(release).has_length(1);
+        assert_that!(release[0].version.id).is_equal_to(&Oid::from_str(&three)?);
+        assert_that!(release[0].from.id).is_equal_to(&Oid::from_str(&one)?);
 
-        let expected_commits: Vec<String> = release
+        let expected_commits: Vec<_> = release[0]
             .commits
-            .into_iter()
-            .map(|commit| commit.commit.oid)
+            .iter()
+            .map(|commit| &commit.commit.oid)
             .collect();
 
-        assert_that!(expected_commits).is_equal_to(vec![three, two, one]);
+        assert_that!(expected_commits).is_equal_to(vec![&three, &two, &one]);
 
         Ok(())
     }
@@ -141,14 +141,11 @@ mod test {
         let range = repo.revwalk_pattern("..0.2.0")?;
 
         // Act
-        let release = Release::try_from(range)?;
+        let release = Release::build_multi(&range)?;
 
         // Assert
-        assert_that!(release.previous).is_some().matches(|_child| {
-            let commits: Vec<String> = release
-                .previous
-                .as_ref()
-                .unwrap()
+        assert_that!(release.get(1)).is_some().matches(|child| {
+            let commits: Vec<String> = child
                 .commits
                 .iter()
                 .map(|commit| commit.commit.oid.clone())
@@ -157,13 +154,13 @@ mod test {
             commits == [three.clone(), two.clone(), one.clone()]
         });
 
-        assert_that!(release.version.to_string()).is_equal_to("0.2.0".to_string());
-        assert_that!(release.from.to_string()).is_equal_to("0.1.0".to_string());
+        assert_that!(release[0].version.to_string()).is_equal_to("0.2.0".to_string());
+        assert_that!(release[0].from.to_string()).is_equal_to("0.1.0".to_string());
 
-        let expected_commits: Vec<String> = release
+        let expected_commits: Vec<String> = release[0]
             .commits
-            .into_iter()
-            .map(|commit| commit.commit.oid)
+            .iter()
+            .map(|commit| commit.commit.oid.clone())
             .collect();
 
         assert_that!(expected_commits).is_equal_to(vec![five, four]);
@@ -178,17 +175,17 @@ mod test {
         let range = repo.revwalk_pattern("0.32.1..0.32.3")?;
 
         // Act
-        let release = Release::try_from(range)?;
+        let releases = Release::build_multi(&range)?;
 
         // Assert
-        assert_that!(release.version.to_string()).is_equal_to("0.32.3".to_string());
-        assert_that!(release.from.to_string()).is_equal_to("0.32.2".to_string());
+        assert_that!(releases).has_length(2);
+        let [release_1, release_2] = releases.try_into().expect("checked length");
+        assert_that!(release_1.version.to_string()).is_equal_to("0.32.3".to_string());
+        assert_that!(release_1.from.to_string()).is_equal_to("0.32.2".to_string());
 
-        let release = *release.previous.unwrap();
-        assert_that!(release.version.to_string()).is_equal_to("0.32.2".to_string());
-        assert_that!(release.from.to_string()).is_equal_to("0.32.1".to_string());
+        assert_that!(release_2.version.to_string()).is_equal_to("0.32.2".to_string());
+        assert_that!(release_2.from.to_string()).is_equal_to("0.32.1".to_string());
 
-        assert_that!(release.previous).is_none();
         Ok(())
     }
 
@@ -499,26 +496,26 @@ mod test {
     fn recursive_from_origin_to_head() -> Result<()> {
         // Arrange
         let repo = Repository::open(COCOGITTO_REPOSITORY)?;
-        let mut tag_count = repo.0.tag_names(None)?.len();
-        let head = repo.get_head_commit_oid()?;
-        let latest = repo.get_latest_tag(None, false)?;
-        if latest.oid == Some(head) {
-            tag_count -= 1;
-        };
+        let cache = repo.get_cache();
+        let mut tags = cache.tags.clone();
+        tags.sort();
+        let mut tag_count = tags.len();
+        // if head doesn't have a tag, one additional "unreleased" release is generated
+        if cache.get_info(cache.head).tags.is_empty() {
+            tag_count += 1;
+        }
+        drop(cache);
 
         let range = repo.revwalk_pattern("..")?;
 
         // Act
-        let mut release = Release::try_from(range)?;
-        let mut count = 0;
-
-        while let Some(previous) = release.previous {
-            release = *previous;
-            count += 1;
-        }
+        let releases = Release::build_multi(&range)?;
 
         // Assert
-        assert_that!(count).is_equal_to(tag_count);
+        assert_that!(releases).has_length(tag_count);
+        for (tag, release) in tags.into_iter().zip(releases.into_iter().rev()) {
+            assert_that!(release.version).is_equal_to(&tag.into());
+        }
 
         Ok(())
     }
@@ -538,7 +535,7 @@ mod test {
         let range = repo.revwalk_pattern(&format!("{}..", &one[0..7]))?;
 
         // Act
-        let release = Release::try_from(range)?;
+        let release = Release::build(&range)?;
 
         // Assert
         let actual_oids: Vec<String> = release
@@ -569,18 +566,17 @@ mod test {
         let range = repo.revwalk_pattern(&format!("{}..", &from[0..7]))?;
 
         // Act
-        let release = Release::try_from(range)?;
+        let releases = Release::build_multi(&range)?;
+        let [release_1, release_2] = releases.try_into().expect("should be 2 releases");
 
         // Assert
-        let head_to_v1: Vec<String> = release
+        let head_to_v1: Vec<String> = release_1
             .commits
             .iter()
             .map(|commit| commit.commit.oid.to_string())
             .collect();
 
-        let commit_before_v1: Vec<String> = release
-            .previous
-            .unwrap()
+        let commit_before_v1: Vec<String> = release_2
             .commits
             .iter()
             .map(|commit| commit.commit.oid.to_string())

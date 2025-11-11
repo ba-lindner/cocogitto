@@ -18,42 +18,40 @@ pub struct Release<'a> {
     pub from: ReleaseVersion,
     pub date: NaiveDateTime,
     pub commits: Vec<ChangelogCommit<'a>>,
-    pub previous: Option<Box<Release<'a>>>,
 }
 
-impl TryFrom<CommitIter<'_>> for Release<'_> {
-    type Error = ChangelogError;
-
-    fn try_from(commits: CommitIter<'_>) -> Result<Self, Self::Error> {
-        let releases = commits.split_at_tags()?;
-
-        let mut current = None;
-
-        for release in releases {
-            let (from, version) = release.version_range();
-            let next = Release {
-                version,
-                from,
-                date: Utc::now().naive_local(),
-                commits: release
-                    .iter_commits()
-                    .filter(|commit| commit.message().is_some())
-                    .filter(|commit| commit.should_retain_by_settings())
-                    .filter_map(|commit| {
-                        Commit::from_git_commit(commit)
-                            .inspect_err(|err| warn!("{}", err.to_string().red()))
-                            .ok()
-                    })
-                    .filter(|commit| !commit.should_omit())
-                    .map(ChangelogCommit::from)
-                    .collect(),
-                previous: current.map(Box::new),
-            };
-
-            current = Some(next);
+impl Release<'_> {
+    pub fn build(commits: &CommitIter<'_>) -> Result<Self, ChangelogError> {
+        if commits.is_empty() {
+            return Err(ChangelogError::EmptyRelease);
         }
+        let (from, version) = commits.version_range();
+        Ok(Release {
+            version,
+            from,
+            date: Utc::now().naive_local(),
+            commits: commits
+                .iter_commits()
+                .filter(|commit| commit.message().is_some())
+                .filter(|commit| commit.should_retain_by_settings())
+                .filter_map(|commit| {
+                    Commit::from_git_commit(commit)
+                        .inspect_err(|err| warn!("{}", err.to_string().red()))
+                        .ok()
+                })
+                .filter(|commit| !commit.should_omit())
+                .map(ChangelogCommit::from)
+                .collect(),
+        })
+    }
 
-        current.ok_or(ChangelogError::EmptyRelease)
+    pub fn build_multi(commits: &CommitIter<'_>) -> Result<Vec<Self>, ChangelogError> {
+        let mut res = Vec::new();
+        for release in commits.split_at_tags()? {
+            res.push(Release::build(&release)?);
+        }
+        res.reverse();
+        Ok(res)
     }
 }
 
@@ -126,7 +124,7 @@ mod test {
     fn should_get_a_release() -> anyhow::Result<()> {
         let repo = Repository::open(".")?;
         let iter = repo.revwalk(RevSpecPattern2::full())?;
-        let release = Release::try_from(iter);
+        let release = Release::build(&iter);
         assert_that!(release)
             .is_ok()
             .matches(|r| !r.commits.is_empty());
@@ -140,7 +138,7 @@ mod test {
         let mut renderer = Renderer::default();
 
         // Act
-        let changelog = renderer.render(release)?;
+        let changelog = renderer.render_single(&release)?;
 
         // Assert
         assert_doc_eq!(
@@ -167,7 +165,7 @@ mod test {
         })?;
 
         // Act
-        let changelog = renderer.render(release)?;
+        let changelog = renderer.render_single(&release)?;
 
         // Assert
         assert_doc_eq!(
@@ -198,7 +196,7 @@ mod test {
         })?;
 
         // Act
-        let changelog = renderer.render(release)?;
+        let changelog = renderer.render_single(&release)?;
 
         // Assert
         assert_doc_eq!(
@@ -227,7 +225,7 @@ mod test {
         let mut renderer = monorepo_renderer(renderer)?;
 
         // Act
-        let changelog = renderer.render(release)?;
+        let changelog = renderer.render_single(&release)?;
 
         // Assert
         assert_doc_eq!(
@@ -260,7 +258,7 @@ mod test {
         let mut renderer = monorepo_manual_bump_renderer(renderer)?;
 
         // Act
-        let changelog = renderer.render(release)?;
+        let changelog = renderer.render_single(&release)?;
 
         // Assert
         assert_doc_eq!(
@@ -293,7 +291,7 @@ mod test {
         let mut renderer = monorepo_renderer(renderer)?;
 
         // Act
-        let changelog = renderer.render(release)?;
+        let changelog = renderer.render_single(&release)?;
 
         // Assert
         assert_doc_eq!(
@@ -326,7 +324,7 @@ mod test {
         let mut renderer = monorepo_manual_bump_renderer(renderer)?;
 
         // Act
-        let changelog = renderer.render(release)?;
+        let changelog = renderer.render_single(&release)?;
 
         // Assert
         assert_doc_eq!(
@@ -363,7 +361,7 @@ mod test {
         let mut renderer = monorepo_renderer(renderer)?;
 
         // Act
-        let changelog = renderer.render(release)?;
+        let changelog = renderer.render_single(&release)?;
 
         // Assert
         assert_doc_eq!(
@@ -396,7 +394,7 @@ mod test {
         let mut renderer = package_renderer(renderer)?;
 
         // Act
-        let changelog = renderer.render(release)?;
+        let changelog = renderer.render_single(&release)?;
 
         // Assert
         assert_doc_eq!(
@@ -425,7 +423,7 @@ mod test {
         let mut renderer = package_renderer(renderer)?;
 
         // Act
-        let changelog = renderer.render(release)?;
+        let changelog = renderer.render_single(&release)?;
 
         // Assert
         assert_doc_eq!(
@@ -458,7 +456,7 @@ mod test {
         let mut renderer = package_renderer(renderer)?;
 
         // Act
-        let changelog = renderer.render(release)?;
+        let changelog = renderer.render_single(&release)?;
 
         // Assert
         assert_doc_eq!(
@@ -491,7 +489,7 @@ mod test {
         let mut renderer = monorepo_manual_bump_renderer(renderer)?;
 
         // Act
-        let changelog = renderer.render(release)?;
+        let changelog = renderer.render_single(&release)?;
 
         // Assert
         assert_doc_eq!(
@@ -524,7 +522,7 @@ mod test {
         let mut renderer = monorepo_renderer(renderer)?;
 
         // Act
-        let changelog = renderer.render(release)?;
+        let changelog = renderer.render_single(&release)?;
 
         // Assert
         assert_doc_eq!(
@@ -557,7 +555,7 @@ mod test {
         let mut renderer = monorepo_renderer(renderer)?;
 
         // Act
-        let changelog = renderer.render(release)?;
+        let changelog = renderer.render_single(&release)?;
 
         // Assert
         assert_doc_eq!(changelog,
@@ -593,7 +591,7 @@ mod test {
         let mut renderer = monorepo_renderer(renderer)?;
 
         // Act
-        let changelog = renderer.render(release)?;
+        let changelog = renderer.render_single(&release)?;
 
         // Assert
         assert_doc_eq!(changelog,
@@ -696,7 +694,6 @@ mod test {
                         },
                     },
                 ],
-                previous: None,
             }
         }
     }
