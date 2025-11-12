@@ -1,45 +1,37 @@
-use crate::conventional::changelog::release::PackageBump;
-use crate::conventional::changelog::release::Release;
-use crate::conventional::changelog::template::MonoRepoContext;
-use crate::conventional::changelog::Changelog;
-
-use crate::conventional::changelog::ReleaseType;
-use crate::git::rev::filters::CommitFilter;
-use crate::git::rev::CommitIter;
-use crate::CocoGitto;
-use crate::SETTINGS;
+use crate::conventional::changelog::release::{PackageBump, Release};
+use crate::git::rev::revspec::RevSpecPattern2;
+use crate::{CocoGitto, Target, SETTINGS};
 use anyhow::Result;
 
 impl CocoGitto {
     /// ## Get a changelog between two oids
     /// - `from` default value:latest tag or else first commit
     /// - `to` default value:`HEAD` or else first commit
-    pub fn get_changelog(&self, pattern: &str, with_child_releases: bool) -> Result<Changelog<'_>> {
-        let commit_range = self
-            .repository
-            .revwalk(self.repository.revspec_from_str(pattern)?)?;
-        Self::build_changelog(&commit_range, with_child_releases, ReleaseType::Standard)
-    }
-
-    fn build_changelog<'r>(
-        commits: &'_ CommitIter,
-        with_child_releases: bool,
-        context: ReleaseType<'r>,
-    ) -> Result<Changelog<'r>> {
-        let releases = if with_child_releases {
-            Release::build_multi(commits)?
-        } else {
-            vec![Release::build(commits)?]
-        };
-        Ok(Changelog { releases, context })
-    }
-
-    pub fn get_monorepo_changelog(
+    pub fn get_changelog(
         &self,
         pattern: &str,
-        unified: bool,
+        target: Target,
         with_child_releases: bool,
-    ) -> Result<Changelog<'_>> {
+    ) -> Result<Vec<Release<'_>>> {
+        let spec = self.repository.revspec_from_str(pattern)?;
+        let commit_range = self.repository.revwalk(spec)?.set_target(target)?;
+        let mut releases = if with_child_releases {
+            Release::build_multi(&commit_range)?
+        } else {
+            vec![Release::build(&commit_range)?]
+        };
+        if matches!(target, Target::Monorepo { .. } | Target::Unified { .. }) {
+            let packages = self.find_package_data(spec)?;
+            // FIXME: get package bump information on a per-release basis
+            // actually difficult to do
+            for release in &mut releases {
+                release.packages = packages.clone();
+            }
+        }
+        Ok(releases)
+    }
+
+    fn find_package_data(&self, spec: RevSpecPattern2) -> Result<Vec<PackageBump<'_>>> {
         let mut packages = vec![];
 
         let mut package_data: Vec<_> = SETTINGS
@@ -49,12 +41,11 @@ impl CocoGitto {
             .collect();
         package_data.sort_by_key(|&(name, _)| name);
 
-        let pattern = self.repository.revspec_from_str(pattern)?;
         for (package_name, package_path) in package_data.iter() {
             let range = self
                 .repository
-                .revwalk(pattern)?
-                .apply_filter(CommitFilter::Package(package_name))?;
+                .revwalk(spec)?
+                .set_target(Target::Package { name: package_name })?;
             if range.is_empty() {
                 continue;
             }
@@ -70,29 +61,6 @@ impl CocoGitto {
 
             packages.push(context);
         }
-
-        let commit_range = self.repository.revwalk(pattern)?.apply_filter(if unified {
-            CommitFilter::Standard
-        } else {
-            CommitFilter::Global
-        })?;
-
-        let mut changelog = Self::build_changelog(
-            &commit_range,
-            with_child_releases,
-            ReleaseType::MonoRepo(MonoRepoContext {
-                package_lock: false,
-            }),
-        )?;
-        // FIXME: get package bump information on a per-release basis
-        // actually difficult to do
-        for release in &mut changelog.releases {
-            release.packages = packages.clone();
-        }
-        Ok(changelog)
-    }
-
-    pub fn get_changelog_at_tag(&self, tag: &str) -> Result<Changelog<'_>> {
-        self.get_changelog(tag, false)
+        Ok(packages)
     }
 }

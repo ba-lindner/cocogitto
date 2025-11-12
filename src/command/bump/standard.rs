@@ -1,7 +1,5 @@
 use crate::command::bump::BumpOptions;
 
-use crate::conventional::changelog::ReleaseType;
-
 use crate::conventional::version::Increment;
 use crate::git::tag::Tag;
 use crate::settings::HookType;
@@ -14,7 +12,7 @@ impl CocoGitto {
     pub fn create_version(&mut self, opts: BumpOptions) -> Result<()> {
         self.pre_bump_checks(opts.skip_untracked)?;
 
-        let bump_res = opts.get_new_version(&self.repository, false, None)?;
+        let bump_res = self.get_new_version(&opts, false, None)?;
         if bump_res.increment() == Increment::NoBump {
             print!("No conventional commits for your repository that required a bump. Changelogs will be updated on the next bump.\nPre-Hooks and Post-Hooks have been skipped.\n");
             return Ok(());
@@ -25,7 +23,7 @@ impl CocoGitto {
             return Ok(());
         }
 
-        self.render_changelog(&bump_res, ReleaseType::Standard)?;
+        self.render_changelog(&bump_res)?;
 
         let hook_result = self.run_hooks(Some(&bump_res), HookType::PreBump, opts.hooks_config);
 

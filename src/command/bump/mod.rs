@@ -1,18 +1,13 @@
 use crate::conventional::changelog::release::Release;
 use crate::conventional::changelog::renderer::Renderer;
-use crate::conventional::changelog::template::TplTarget;
-use crate::conventional::changelog::ReleaseType;
 use crate::conventional::commit::Commit;
-use crate::git::error::TagError;
-
 use crate::conventional::error::BumpError as ConvBumpError;
 use crate::conventional::version::{Increment, IncrementCommand};
-use crate::git::repository::Repository;
-use crate::git::rev::filters::CommitFilter;
+use crate::git::error::TagError;
 use crate::git::tag::Tag;
 use crate::hook::{Hook, Hooks};
 use crate::settings::{self, HookType, MonoRepoPackage, Settings};
-use crate::BumpError;
+use crate::{BumpError, Target};
 use crate::{CocoGitto, COMMITS_METADATA, SETTINGS};
 use anyhow::Result;
 use anyhow::{bail, ensure, Context};
@@ -65,120 +60,7 @@ pub struct BumpOptions<'a, P = ()> {
     pub package: P,
 }
 
-struct BumpResult<P = ()> {
-    current: Tag,
-    next: Tag,
-    release: Release<'static>,
-    package: P,
-}
-
-impl<P> BumpResult<P> {
-    fn increment(&self) -> Increment {
-        self.next
-            .get_increment_from(&self.current)
-            .unwrap_or(Increment::NoBump)
-    }
-}
-
 impl<'a, P> BumpOptions<'a, P> {
-    fn get_new_version(
-        &self,
-        repository: &Repository,
-        allow_empty: bool,
-        increment: Option<IncrementCommand>,
-    ) -> Result<BumpResult<P>>
-    where
-        P: MaybePkg,
-    {
-        let package = self.package.maybe_pkg().unzip().0;
-
-        let current = match repository.get_latest_tag(package, false) {
-            Ok(tag) => tag,
-            Err(TagError::NoTag) => Tag {
-                package: package.map(ToString::to_string),
-                ..Default::default()
-            },
-            Err(other) => bail!(other),
-        };
-        let current_prerelease = repository
-            .get_latest_tag(package, true)
-            .ok()
-            .filter(|tag| *tag > current);
-
-        let increment = increment.unwrap_or_else(|| self.increment.clone());
-        let bump_filter = match &increment {
-            IncrementCommand::AutoMonoRepoGlobal(_) => CommitFilter::Global,
-            IncrementCommand::AutoPackage(package) => CommitFilter::Package(package),
-            _ => CommitFilter::Standard,
-        };
-        let mut commits = repository
-            .commits_since_tag(&current)?
-            .apply_filter(bump_filter)?;
-        let mut next = match current.bump(&increment, &commits) {
-            Ok(tag) => tag,
-            Err(ConvBumpError::NoCommitFound) if allow_empty => current.clone().reset_metadata(),
-            Err(other) => bail!(other),
-        };
-        assert_eq!(next.package, current.package);
-
-        // if prerelease exists, ensure the new tag is not smaller
-        if let Some(pre_release) = &current_prerelease {
-            if next < *pre_release {
-                next.version.major = pre_release.version.major;
-                next.version.minor = pre_release.version.minor;
-                next.version.patch = pre_release.version.patch;
-            }
-        }
-
-        if current.version != next.version {
-            if let Some(pre_release) = self.pre_release {
-                next.version.pre = Prerelease::new(pre_release)?;
-            }
-
-            if let Some(build) = self.build {
-                next.version.build = BuildMetadata::new(build)?;
-            }
-        }
-
-        // ensure version doesn't decrease
-        if next < current {
-            bail!(
-                "{}:\n\t{} version MUST be greater than current one: {}\n",
-                "SemVer Error".red(),
-                "cause:".red(),
-                format!("{next} <= {current}").red(),
-            );
-        }
-
-        if let Some(prerelease) = &current_prerelease {
-            if !next.version.pre.is_empty() {
-                commits = repository.commits_since_tag(prerelease)?;
-            }
-        }
-        commits = commits.apply_filter(if let Some(package) = package {
-            CommitFilter::Package(package)
-        } else if SETTINGS.packages.is_empty() {
-            CommitFilter::Standard
-        } else {
-            CommitFilter::Global
-        })?;
-        let mut release = Release::build(&commits).unwrap_or(Release {
-            version: next.clone().into(),
-            from: current.clone().into(),
-            date: Default::default(),
-            commits: Vec::new(),
-            packages: Vec::new(),
-        });
-        release.version = next.clone().into();
-
-        Ok(BumpResult {
-            current,
-            next,
-            release,
-            package: self.package,
-        })
-    }
-
     pub fn set_package<P2>(self, package: P2) -> BumpOptions<'a, P2> {
         BumpOptions {
             increment: self.increment,
@@ -197,7 +79,116 @@ impl<'a, P> BumpOptions<'a, P> {
     }
 }
 
+struct BumpResult<P = ()> {
+    current: Tag,
+    next: Tag,
+    release: Release<'static>,
+    package: P,
+}
+
+impl<P> BumpResult<P> {
+    fn increment(&self) -> Increment {
+        self.next
+            .get_increment_from(&self.current)
+            .unwrap_or(Increment::NoBump)
+    }
+}
+
 impl CocoGitto {
+    fn get_new_version<P>(
+        &self,
+        opts: &BumpOptions<'_, P>,
+        allow_empty: bool,
+        increment: Option<IncrementCommand>,
+    ) -> Result<BumpResult<P>>
+    where
+        P: MaybePkg,
+    {
+        let package = opts.package.maybe_pkg().unzip().0;
+
+        let current = match self.repository.get_latest_tag(package, false) {
+            Ok(tag) => tag,
+            Err(TagError::NoTag) => Tag {
+                package: package.map(ToString::to_string),
+                ..Default::default()
+            },
+            Err(other) => bail!(other),
+        };
+        let current_prerelease = self
+            .repository
+            .get_latest_tag(package, true)
+            .ok()
+            .filter(|tag| *tag > current);
+
+        let increment = increment.unwrap_or_else(|| opts.increment.clone());
+        let bump_target = match &increment {
+            IncrementCommand::AutoMonoRepoGlobal(_) => Target::Monorepo {
+                manual: opts.increment != IncrementCommand::Auto,
+            },
+            IncrementCommand::AutoPackage(name) => Target::package(name),
+            _ => Target::Standard,
+        };
+        let mut commits = self
+            .repository
+            .commits_since_tag(&current)?
+            .set_target(bump_target)?;
+        let mut next = match current.bump(&increment, &commits) {
+            Ok(tag) => tag,
+            Err(ConvBumpError::NoCommitFound) if allow_empty => current.clone().reset_metadata(),
+            Err(other) => bail!(other),
+        };
+        assert_eq!(next.package, current.package);
+
+        // if prerelease exists, ensure the new tag is not smaller
+        if let Some(pre_release) = &current_prerelease {
+            if next < *pre_release {
+                next.version.major = pre_release.version.major;
+                next.version.minor = pre_release.version.minor;
+                next.version.patch = pre_release.version.patch;
+            }
+        }
+
+        if current.version != next.version {
+            if let Some(pre_release) = opts.pre_release {
+                next.version.pre = Prerelease::new(pre_release)?;
+            }
+
+            if let Some(build) = opts.build {
+                next.version.build = BuildMetadata::new(build)?;
+            }
+        }
+
+        // ensure version doesn't decrease
+        if next < current {
+            bail!(
+                "{}:\n\t{} version MUST be greater than current one: {}\n",
+                "SemVer Error".red(),
+                "cause:".red(),
+                format!("{next} <= {current}").red(),
+            );
+        }
+
+        if let Some(prerelease) = &current_prerelease {
+            if !next.version.pre.is_empty() {
+                commits = self.repository.commits_since_tag(prerelease)?;
+            }
+        }
+        commits = commits.set_target(Target::from_options(
+            package,
+            opts.increment != IncrementCommand::Auto,
+            false,
+        ))?;
+        let mut release = Release::build_raw(&commits);
+        release.version = next.clone().into();
+
+        Ok(BumpResult {
+            current,
+            next,
+            release,
+            package: opts.package,
+        })
+    }
+
     pub fn unwrap_or_stash_and_exit<T>(&mut self, tag: &Tag, result: Result<T>) -> T {
         match result {
             Ok(res) => res,
@@ -260,18 +251,14 @@ impl CocoGitto {
         Ok(())
     }
 
-    fn render_changelog<P: MaybePkg>(&self, bump: &BumpResult<P>, kind: ReleaseType) -> Result<()> {
+    fn render_changelog<P: MaybePkg>(&self, bump: &BumpResult<P>) -> Result<()> {
         if SETTINGS.disable_changelog {
             return Ok(());
         }
 
         bump.release.pretty_print_bump_summary()?;
 
-        let template = SETTINGS.get_changelog_template(match kind {
-            ReleaseType::Standard => TplTarget::Standard,
-            ReleaseType::MonoRepo(_) => TplTarget::Monorepo,
-            ReleaseType::Package(_) => TplTarget::Package,
-        })?;
+        let template = SETTINGS.get_changelog_template(bump.release.target)?;
         let mut renderer = Renderer::try_new(template)?;
         if let Some(context) = SETTINGS.get_template_context() {
             renderer.add_context(context);
@@ -281,7 +268,7 @@ impl CocoGitto {
             .maybe_pkg()
             .map(|(_, package)| package.changelog_path())
             .unwrap_or(settings::changelog_path().clone());
-        bump.release.write_to_file(path, kind, renderer)?;
+        bump.release.write_to_file(path, renderer)?;
 
         Ok(())
     }

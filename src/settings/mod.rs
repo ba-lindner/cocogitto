@@ -5,12 +5,10 @@ use std::path::PathBuf;
 
 use crate::conventional::commit::CommitConfig;
 use crate::git::repository::Repository;
-use crate::{get_config_path, SETTINGS};
+use crate::{get_config_path, Target, SETTINGS};
 
 use crate::conventional::changelog::error::ChangelogError;
-use crate::conventional::changelog::template::{
-    PredefinedTemplate, RemoteContext, Template, TplTarget,
-};
+use crate::conventional::changelog::template::{PredefinedTemplate, RemoteContext, Template};
 use crate::hook::Hooks;
 use crate::settings::error::SettingError;
 use config::{Config, File, FileFormat};
@@ -516,8 +514,8 @@ impl Settings {
         RemoteContext::try_new(remote, repository, owner)
     }
 
-    pub fn get_changelog_template(&self, target: TplTarget) -> Result<Template, ChangelogError> {
-        let template = if target == TplTarget::Package {
+    pub fn get_changelog_template(&self, target: Target) -> Result<Template, ChangelogError> {
+        let template = if matches!(target, Target::Package { .. }) {
             self.changelog.package_template.as_deref()
         } else {
             self.changelog.template.as_deref()
@@ -525,7 +523,7 @@ impl Settings {
         .unwrap_or("default");
         let mut template = Template::from_arg(template)?;
         if let Template::Predefined(tpl) = &mut template {
-            if tpl.target == TplTarget::Standard {
+            if tpl.target == Target::Standard {
                 *tpl = PredefinedTemplate::by_target_and_kind(target, tpl.kind)
             }
         }

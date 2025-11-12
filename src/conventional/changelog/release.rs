@@ -1,9 +1,9 @@
-use crate::conventional::changelog::error::ChangelogError;
 use crate::conventional::commit::Commit;
 use crate::git::commit::GitCommitExt;
 use crate::git::oid::ReleaseVersion;
 use crate::git::rev::CommitIter;
 use crate::settings;
+use crate::{conventional::changelog::error::ChangelogError, Target};
 use chrono::{NaiveDateTime, Utc};
 use colored::Colorize;
 use conventional_commit_parser::commit::Footer;
@@ -18,6 +18,8 @@ pub struct Release<'a> {
     pub date: NaiveDateTime,
     pub commits: Vec<ChangelogCommit<'a>>,
     pub packages: Vec<PackageBump<'a>>,
+    #[serde(skip)]
+    pub target: Target,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -28,13 +30,18 @@ pub struct PackageBump<'a> {
     pub from: Option<ReleaseVersion>,
 }
 
-impl Release<'_> {
+impl Release<'static> {
     pub fn build(commits: &CommitIter<'_>) -> Result<Self, ChangelogError> {
         if commits.is_empty() {
-            return Err(ChangelogError::EmptyRelease);
+            Err(ChangelogError::EmptyRelease)
+        } else {
+            Ok(Self::build_raw(commits))
         }
+    }
+
+    pub(crate) fn build_raw(commits: &CommitIter<'_>) -> Self {
         let (from, version) = commits.version_range();
-        Ok(Release {
+        Release {
             version,
             from,
             date: Utc::now().naive_local(),
@@ -51,14 +58,16 @@ impl Release<'_> {
                 .map(ChangelogCommit::from)
                 .collect(),
             packages: Vec::new(),
-        })
+            target: commits.target,
+        }
     }
 
     pub fn build_multi(commits: &CommitIter<'_>) -> Result<Vec<Self>, ChangelogError> {
-        let mut res = Vec::new();
-        for release in commits.split_at_tags()? {
-            res.push(Release::build(&release)?);
-        }
+        let mut res = commits
+            .split_at_tags()?
+            .iter()
+            .map(Self::build_raw)
+            .collect::<Vec<_>>();
         res.reverse();
         Ok(res)
     }
@@ -111,11 +120,10 @@ mod test {
 
     use crate::conventional::changelog::release::{ChangelogCommit, PackageBump, Release};
     use crate::conventional::changelog::renderer::Renderer;
-    use crate::conventional::changelog::template::{
-        MonoRepoContext, PackageContext, PredefinedTemplate, RemoteContext, Template,
-    };
+    use crate::conventional::changelog::template::{PredefinedTemplate, RemoteContext, Template};
     use crate::conventional::commit::Commit;
     use crate::git::repository::Repository;
+    use crate::Target;
 
     use crate::git::rev::revspec::RevSpecPattern2;
     use crate::git::tag::Tag;
@@ -143,7 +151,7 @@ mod test {
     #[test]
     fn should_render_default_template() -> Result<()> {
         // Arrange
-        let release = Release::fixture();
+        let release = Release::fixture(Target::Standard);
         let renderer = Renderer::default();
 
         // Act
@@ -167,7 +175,7 @@ mod test {
     #[test]
     fn should_render_full_hash_template() -> Result<()> {
         // Arrange
-        let release = Release::fixture();
+        let release = Release::fixture(Target::Standard);
         let renderer = Renderer::try_new(Template::Predefined(PredefinedTemplate::FULL_HASH))?;
 
         // Act
@@ -191,16 +199,9 @@ mod test {
     #[test]
     fn should_render_github_template() -> Result<()> {
         // Arrange
-        let release = Release::fixture();
+        let release = Release::fixture(Target::Standard);
         let mut renderer = Renderer::try_new(Template::Predefined(PredefinedTemplate::REMOTE))?;
-        renderer.add_context(
-            RemoteContext::try_new(
-                Some("github.com".into()),
-                Some("cocogitto".into()),
-                Some("cocogitto".into()),
-            )
-            .unwrap(),
-        );
+        renderer.add_context(RemoteContext::fixture());
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -224,9 +225,8 @@ mod test {
     fn should_render_template_monorepo() -> Result<()> {
         // Arrange
         let release = Release::fixture_monorepo();
-        let mut renderer =
+        let renderer =
             Renderer::try_new(Template::Predefined(PredefinedTemplate::MONOERPO_DEFAULT))?;
-        renderer.add_context(MonoRepoContext::fixture());
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -254,9 +254,8 @@ mod test {
     fn should_render_template_monorepo_for_manual_bump() -> Result<()> {
         // Arrange
         let release = Release::fixture_manual();
-        let mut renderer =
+        let renderer =
             Renderer::try_new(Template::Predefined(PredefinedTemplate::MONOERPO_DEFAULT))?;
-        renderer.add_context(MonoRepoContext::fixture_manual());
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -284,9 +283,8 @@ mod test {
     fn should_render_full_hash_template_monorepo() -> Result<()> {
         // Arrange
         let release = Release::fixture_monorepo();
-        let mut renderer =
+        let renderer =
             Renderer::try_new(Template::Predefined(PredefinedTemplate::MONOERPO_FULL_HASH))?;
-        renderer.add_context(MonoRepoContext::fixture());
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -314,9 +312,8 @@ mod test {
     fn should_render_full_hash_template_manual_monorepo() -> Result<()> {
         // Arrange
         let release = Release::fixture_manual();
-        let mut renderer =
+        let renderer =
             Renderer::try_new(Template::Predefined(PredefinedTemplate::MONOERPO_FULL_HASH))?;
-        renderer.add_context(MonoRepoContext::fixture_manual());
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -347,7 +344,6 @@ mod test {
         let mut renderer =
             Renderer::try_new(Template::Predefined(PredefinedTemplate::MONOERPO_REMOTE))?;
         renderer.add_context(RemoteContext::fixture());
-        renderer.add_context(MonoRepoContext::fixture());
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -378,7 +374,6 @@ mod test {
         let mut renderer =
             Renderer::try_new(Template::Predefined(PredefinedTemplate::MONOERPO_REMOTE))?;
         renderer.add_context(RemoteContext::fixture());
-        renderer.add_context(MonoRepoContext::fixture_manual());
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -405,10 +400,9 @@ mod test {
     #[test]
     fn should_render_template_package() -> Result<()> {
         // Arrange
-        let release = Release::fixture();
-        let mut renderer =
+        let release = Release::fixture(Target::Package { name: "one" });
+        let renderer =
             Renderer::try_new(Template::Predefined(PredefinedTemplate::PACKAGE_DEFAULT))?;
-        renderer.add_context(PackageContext::fixture());
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -431,10 +425,9 @@ mod test {
     #[test]
     fn should_render_full_hash_template_package() -> Result<()> {
         // Arrange
-        let release = Release::fixture();
-        let mut renderer =
+        let release = Release::fixture(Target::Package { name: "one" });
+        let renderer =
             Renderer::try_new(Template::Predefined(PredefinedTemplate::PACKAGE_FULL_HASH))?;
-        renderer.add_context(PackageContext::fixture());
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -457,11 +450,10 @@ mod test {
     #[test]
     fn should_render_remote_template_package() -> Result<()> {
         // Arrange
-        let release = Release::fixture();
+        let release = Release::fixture(Target::Package { name: "one" });
         let mut renderer =
             Renderer::try_new(Template::Predefined(PredefinedTemplate::PACKAGE_REMOTE))?;
         renderer.add_context(RemoteContext::fixture());
-        renderer.add_context(PackageContext::fixture());
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -486,9 +478,8 @@ mod test {
         // Arrange
         let release = Release::fixture_monorepo();
 
-        let mut renderer =
+        let renderer =
             Renderer::try_new(Template::Predefined(PredefinedTemplate::UNIFIED_DEFAULT))?;
-        renderer.add_context(MonoRepoContext::fixture());
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -517,9 +508,8 @@ mod test {
         // Arrange
         let release = Release::fixture_monorepo();
 
-        let mut renderer =
+        let renderer =
             Renderer::try_new(Template::Predefined(PredefinedTemplate::UNIFIED_FULL_HASH))?;
-        renderer.add_context(MonoRepoContext::fixture());
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -550,7 +540,6 @@ mod test {
         let mut renderer =
             Renderer::try_new(Template::Predefined(PredefinedTemplate::UNIFIED_REMOTE))?;
         renderer.add_context(RemoteContext::fixture());
-        renderer.add_context(MonoRepoContext::fixture());
 
         // Act
         let changelog = renderer.render_single(&release)?;
@@ -574,7 +563,7 @@ mod test {
     }
 
     impl Release<'_> {
-        pub fn fixture() -> Release<'static> {
+        pub fn fixture(target: Target) -> Release<'static> {
             let date =
                 NaiveDateTime::parse_from_str("2015-09-05 23:56:04", "%Y-%m-%d %H:%M:%S").unwrap();
 
@@ -657,11 +646,12 @@ mod test {
                     },
                 ],
                 packages: Vec::new(),
+                target,
             }
         }
 
         fn fixture_monorepo() -> Release<'static> {
-            let mut release = Self::fixture();
+            let mut release = Self::fixture(Target::Monorepo { manual: false });
             release.packages = vec![
                 PackageBump {
                     package_name: "one",
@@ -708,7 +698,7 @@ mod test {
         }
 
         fn fixture_manual() -> Self {
-            let mut release = Self::fixture();
+            let mut release = Self::fixture(Target::Monorepo { manual: true });
             release.packages = vec![
                 PackageBump {
                     package_name: "one",
@@ -745,26 +735,6 @@ mod test {
                 Some("cocogitto".into()),
             )
             .unwrap()
-        }
-    }
-
-    impl MonoRepoContext {
-        fn fixture() -> Self {
-            MonoRepoContext {
-                package_lock: false,
-            }
-        }
-
-        fn fixture_manual() -> Self {
-            MonoRepoContext { package_lock: true }
-        }
-    }
-
-    impl PackageContext<'_> {
-        fn fixture() -> Self {
-            PackageContext {
-                package_name: "one",
-            }
         }
     }
 }

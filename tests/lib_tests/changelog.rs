@@ -4,7 +4,7 @@ use cmd_lib::run_cmd;
 use sealed_test::prelude::*;
 use speculoos::prelude::*;
 
-use cocogitto::CocoGitto;
+use cocogitto::{CocoGitto, Target};
 
 use crate::helpers::{git_commit, git_init, git_log_head_sha, git_tag};
 
@@ -36,23 +36,23 @@ fn getting_changelog_from_tags_should_produce_the_same_range_either_from_tags_or
     // Act
     let cocogitto = CocoGitto::get()?;
     let changelog_from_commit_range =
-        cocogitto.get_changelog(&format!("{sha_0_1}..{head}"), false)?;
-    let changelog_tag_range = cocogitto.get_changelog("0.1.0..0.2.0", false)?;
-    let at_tag = cocogitto.get_changelog("0.2.0", false)?;
+        cocogitto.get_changelog(&format!("{sha_0_1}..{head}"), Target::Standard, false)?;
+    let changelog_tag_range = cocogitto.get_changelog("0.1.0..0.2.0", Target::Standard, false)?;
+    let at_tag = cocogitto.get_changelog("0.2.0", Target::Standard, false)?;
 
-    let commit_range_oids: Vec<_> = changelog_from_commit_range.releases[0]
+    let commit_range_oids: Vec<_> = changelog_from_commit_range[0]
         .commits
         .iter()
         .map(|commit| &commit.commit.conventional.summary)
         .collect();
 
-    let tag_range_oids: Vec<_> = changelog_tag_range.releases[0]
+    let tag_range_oids: Vec<_> = changelog_tag_range[0]
         .commits
         .iter()
         .map(|commit| &commit.commit.conventional.summary)
         .collect();
 
-    let at_tag_oids: Vec<_> = at_tag.releases[0]
+    let at_tag_oids: Vec<_> = at_tag[0]
         .commits
         .iter()
         .map(|commit| &commit.commit.conventional.summary)
@@ -92,9 +92,9 @@ fn from_commit_should_be_drained() -> Result<()> {
     // Act
     let cocogitto = CocoGitto::get()?;
     let changelog_from_commit_range =
-        cocogitto.get_changelog(&format!("{unttaged_sha}..{head}"), true)?;
+        cocogitto.get_changelog(&format!("{unttaged_sha}..{head}"), Target::Standard, true)?;
 
-    let commit_range_oids: Vec<_> = changelog_from_commit_range.releases[0]
+    let commit_range_oids: Vec<_> = changelog_from_commit_range[0]
         .commits
         .iter()
         .map(|commit| &commit.commit.oid)

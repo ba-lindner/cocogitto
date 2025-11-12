@@ -4,15 +4,6 @@ mod mangen;
 use std::fs;
 use std::path::PathBuf;
 
-use cocogitto::conventional::changelog::renderer::Renderer;
-use cocogitto::conventional::changelog::template::{RemoteContext, Template, TplTarget};
-use cocogitto::conventional::commit as conv_commit;
-use cocogitto::conventional::version::IncrementCommand;
-
-use cocogitto::log::filter::{CommitFilter, CommitFilters};
-use cocogitto::log::output::Output;
-use cocogitto::{set_config_path, CocoGitto, CommitHook, DEFAULT_CONFIG_PATH, SETTINGS};
-
 use crate::commit::prepare_edit_message;
 use anyhow::{bail, Context, Result};
 use clap::builder::{PossibleValue, PossibleValuesParser};
@@ -21,7 +12,14 @@ use clap_complete::{shells, Generator};
 use clap_complete_nushell::Nushell;
 use cocogitto::command::bump::BumpOptions;
 use cocogitto::command::commit::CommitOptions;
+use cocogitto::conventional::changelog::renderer::Renderer;
+use cocogitto::conventional::changelog::template::{RemoteContext, Template};
+use cocogitto::conventional::commit as conv_commit;
+use cocogitto::conventional::version::IncrementCommand;
+use cocogitto::log::filter::{CommitFilter, CommitFilters};
+use cocogitto::log::output::Output;
 use cocogitto::settings::GitHookType;
+use cocogitto::{set_config_path, CocoGitto, CommitHook, Target, DEFAULT_CONFIG_PATH, SETTINGS};
 
 fn hook_profiles() -> PossibleValuesParser {
     let profiles = SETTINGS
@@ -634,19 +632,15 @@ fn main() -> Result<()> {
         } => {
             let cocogitto = CocoGitto::get()?;
 
+            let target = Target::from_options(None, false, unified);
+
             let context = RemoteContext::try_new(remote, repository, owner)
                 .or_else(|| SETTINGS.get_template_context());
             let template = template.as_ref().or(SETTINGS.changelog.template.as_ref());
             let template = if let Some(template) = template {
                 Template::from_arg(template)?
             } else {
-                Template::default_for_target(if SETTINGS.packages.is_empty() {
-                    TplTarget::Standard
-                } else if unified {
-                    TplTarget::Unified
-                } else {
-                    TplTarget::Monorepo
-                })
+                Template::default_for_target(target)
             };
             let mut renderer = Renderer::try_new(template)?;
             if let Some(context) = context {
@@ -655,15 +649,9 @@ fn main() -> Result<()> {
 
             // TODO: fallback to tag here
             let pattern = at.as_deref().or(pattern.as_deref()).unwrap_or("..");
-            // FIXME: remove second condition
-            let release = if SETTINGS.packages.is_empty() || at.is_some() {
-                // TODO: enforce single-version changelogs with --at
-                cocogitto.get_changelog(pattern, true)?
-            } else {
-                // TODO: enforce single-version changelogs with --at
-                cocogitto.get_monorepo_changelog(pattern, unified, true)?
-            };
-            println!("{}", release.into_markdown(renderer)?);
+            // TODO: enforce single release with --at (true -> at.is_none())
+            let release = cocogitto.get_changelog(pattern, target, true)?;
+            println!("{}", renderer.render(&release)?);
         }
         Command::Init { path } => {
             cocogitto::command::init::init(&path)?;

@@ -42,7 +42,7 @@ impl Renderer {
         self.context.extend(context.to_context());
     }
 
-    pub(crate) fn render(&self, version: &[Release]) -> Result<String, tera::Error> {
+    pub fn render(&self, version: &[Release]) -> Result<String, tera::Error> {
         let Some(first) = version.first() else {
             return Ok(String::new());
         };
@@ -55,8 +55,9 @@ impl Renderer {
         Ok(release)
     }
 
-    pub(crate) fn render_single(&self, version: &Release) -> Result<String, tera::Error> {
+    pub fn render_single(&self, version: &Release) -> Result<String, tera::Error> {
         let mut context = self.context.clone();
+        context.extend(version.target.to_context());
         context.extend(Context::from_serialize(version)?);
 
         self.tera.render(self.template.name(), &context)

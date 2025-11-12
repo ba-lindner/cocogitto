@@ -67,6 +67,40 @@ pub static SETTINGS: Lazy<Settings> = Lazy::new(|| {
 pub static COMMITS_METADATA: Lazy<HashMap<CommitType, CommitConfig>> =
     Lazy::new(|| SETTINGS.load_commit_types());
 
+/// The target of a cocogitto execution
+///
+/// mainly used for bumping and changelogs
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Target {
+    Standard,
+    Package { name: &'static str },
+    Monorepo { manual: bool },
+    Unified { manual: bool },
+}
+
+impl Target {
+    pub fn from_options(package: Option<&str>, manual: bool, unified: bool) -> Self {
+        if SETTINGS.packages.is_empty() {
+            Self::Standard
+        } else if let Some(name) = package {
+            Self::package(name)
+        } else if unified {
+            Self::Unified { manual }
+        } else {
+            Self::Monorepo { manual }
+        }
+    }
+
+    pub fn package(name: &str) -> Self {
+        let name = SETTINGS
+            .packages
+            .keys()
+            .find(|key| *key == name)
+            .expect("invalid package");
+        Target::Package { name }
+    }
+}
+
 #[derive(Debug)]
 pub struct CocoGitto {
     repository: Repository,

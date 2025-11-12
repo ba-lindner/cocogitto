@@ -1,8 +1,6 @@
-use crate::{
-    git::{error::Git2Error, repository::Repository, tag::Tag},
-    settings::MonoRepoPackage,
-    SETTINGS,
-};
+use crate::git::{error::Git2Error, repository::Repository, tag::Tag};
+use crate::settings::MonoRepoPackage;
+use crate::{Target, SETTINGS};
 use git2::{Commit, Diff};
 use globset::{Candidate, GlobBuilder, GlobSet, GlobSetBuilder};
 use once_cell::sync::Lazy;
@@ -123,34 +121,24 @@ impl Repository {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum CommitFilter<'p> {
-    /// no filtering
-    Standard,
-    /// global commits only
-    Global,
-    /// package specific commits only
-    Package(&'p str),
-}
-
-impl CommitFilter<'_> {
+impl Target {
     pub(crate) fn matches_commit(
         &self,
         repository: &Repository,
         commit: &Commit<'_>,
     ) -> Result<bool, Git2Error> {
         match self {
-            CommitFilter::Standard => Ok(true),
-            CommitFilter::Global => repository.is_commit_global(commit),
-            CommitFilter::Package(package) => repository.is_commit_in_package(commit, package),
+            Target::Standard | Target::Unified { .. } => Ok(true),
+            Target::Monorepo { .. } => repository.is_commit_global(commit),
+            Target::Package { name } => repository.is_commit_in_package(commit, name),
         }
     }
 
     pub(crate) fn matches_tag(&self, tag: &Tag) -> bool {
         match self {
-            CommitFilter::Standard => true,
-            CommitFilter::Global => tag.package.is_none(),
-            CommitFilter::Package(package) => tag.package.as_deref() == Some(package),
+            Target::Standard => true,
+            Target::Monorepo { .. } | Target::Unified { .. } => tag.package.is_none(),
+            Target::Package { name } => tag.package.as_deref() == Some(name),
         }
     }
 }

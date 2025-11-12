@@ -1,4 +1,4 @@
-use crate::conventional::changelog::{error::ChangelogError, ReleaseType};
+use crate::{conventional::changelog::error::ChangelogError, Target};
 
 use tera::Context;
 
@@ -12,24 +12,16 @@ pub enum TplKind {
     FullHash,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum TplTarget {
-    Standard,
-    Package,
-    Monorepo,
-    Unified,
-}
-
 #[derive(Clone, Copy, Debug)]
 pub struct PredefinedTemplate {
     pub name: &'static str,
     pub content: &'static str,
-    pub target: TplTarget,
+    pub target: Target,
     pub kind: TplKind,
 }
 
 macro_rules! predefined_templates {
-    ($($var:ident : $name:literal $content:literal $target:ident $kind:ident),+ $(,)?) => {
+    ($($var:ident : $name:literal $content:literal $target:ident $({$targ:ident : $val:expr})? $kind:ident),+ $(,)?) => {
 
         impl PredefinedTemplate {
             const ALL: &[PredefinedTemplate] = &[$(PredefinedTemplate::$var,)+];
@@ -37,13 +29,13 @@ macro_rules! predefined_templates {
             $(pub const $var: PredefinedTemplate = PredefinedTemplate {
                 name: $name,
                 content: include_str!($content),
-                target: TplTarget::$target,
+                target: Target::$target $({ $targ : $val })?,
                 kind: TplKind::$kind,
             };)+
 
-            pub fn by_target_and_kind(target: TplTarget, kind: TplKind) -> Self {
+            pub fn by_target_and_kind(target: Target, kind: TplKind) -> Self {
                 match (target, kind) {
-                    $((TplTarget::$target, TplKind::$kind) => PredefinedTemplate::$var,)+
+                    $((Target::$target $({ $targ : _ })?, TplKind::$kind) => PredefinedTemplate::$var,)+
                 }
             }
         }
@@ -54,15 +46,15 @@ predefined_templates! {
     DEFAULT: "default" "template/simple.tera" Standard Default,
     REMOTE: "remote" "template/remote.tera" Standard Remote,
     FULL_HASH: "full_hash" "template/full_hash.tera" Standard FullHash,
-    PACKAGE_DEFAULT: "package_default" "template/package_simple.tera" Package Default,
-    PACKAGE_REMOTE: "package_remote" "template/package_remote.tera" Package Remote,
-    PACKAGE_FULL_HASH: "package_full_hash" "template/package_full_hash.tera" Package FullHash,
-    MONOERPO_DEFAULT: "monorepo_default" "template/monorepo_simple.tera" Monorepo Default,
-    MONOERPO_REMOTE: "monorepo_remote" "template/monorepo_remote.tera" Monorepo Remote,
-    MONOERPO_FULL_HASH: "monorepo_full_hash" "template/monorepo_full_hash.tera" Monorepo FullHash,
-    UNIFIED_DEFAULT: "unified_default" "template/unified_simple.tera" Unified Default,
-    UNIFIED_REMOTE: "unified_remote" "template/unified_remote.tera" Unified Remote,
-    UNIFIED_FULL_HASH: "unified_full_hash" "template/unified_full_hash.tera" Unified FullHash,
+    PACKAGE_DEFAULT: "package_default" "template/package_simple.tera" Package { name: "" } Default,
+    PACKAGE_REMOTE: "package_remote" "template/package_remote.tera" Package { name: "" } Remote,
+    PACKAGE_FULL_HASH: "package_full_hash" "template/package_full_hash.tera" Package { name: "" } FullHash,
+    MONOERPO_DEFAULT: "monorepo_default" "template/monorepo_simple.tera" Monorepo { manual: false } Default,
+    MONOERPO_REMOTE: "monorepo_remote" "template/monorepo_remote.tera" Monorepo { manual: false } Remote,
+    MONOERPO_FULL_HASH: "monorepo_full_hash" "template/monorepo_full_hash.tera" Monorepo { manual: false } FullHash,
+    UNIFIED_DEFAULT: "unified_default" "template/unified_simple.tera" Unified { manual: false } Default,
+    UNIFIED_REMOTE: "unified_remote" "template/unified_remote.tera" Unified { manual: false } Remote,
+    UNIFIED_FULL_HASH: "unified_full_hash" "template/unified_full_hash.tera" Unified { manual: false } FullHash,
 }
 
 #[derive(Debug)]
@@ -87,7 +79,7 @@ impl Template {
         }
     }
 
-    pub fn default_for_target(target: TplTarget) -> Self {
+    pub fn default_for_target(target: Target) -> Self {
         Self::Predefined(PredefinedTemplate::by_target_and_kind(
             target,
             TplKind::Default,
@@ -117,43 +109,21 @@ pub struct RemoteContext {
     owner: String,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct MonoRepoContext {
-    pub package_lock: bool,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct PackageContext<'a> {
-    pub package_name: &'a str,
-}
-
 pub trait ToContext {
     fn to_context(&self) -> Context;
 }
 
-impl ToContext for MonoRepoContext {
+impl ToContext for Target {
     fn to_context(&self) -> Context {
-        let mut context = tera::Context::new();
-        context.insert("package_lock", &self.package_lock);
-        context
-    }
-}
-
-impl ToContext for PackageContext<'_> {
-    fn to_context(&self) -> Context {
-        let mut context = tera::Context::new();
-        context.insert("package_name", &self.package_name);
-        context
-    }
-}
-
-impl ToContext for ReleaseType<'_> {
-    fn to_context(&self) -> Context {
+        let mut context = Context::new();
         match self {
-            ReleaseType::Standard => Context::new(),
-            ReleaseType::MonoRepo(inner) => inner.to_context(),
-            ReleaseType::Package(inner) => inner.to_context(),
+            Target::Standard => {}
+            Target::Monorepo { manual } | Target::Unified { manual } => {
+                context.insert("package_lock", manual);
+            }
+            Target::Package { name } => context.insert("package_name", name),
         }
+        context
     }
 }
 

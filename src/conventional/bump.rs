@@ -124,10 +124,10 @@ mod test {
     use crate::conventional::error::BumpError;
     use crate::conventional::version::Increment;
     use crate::git::repository::Repository;
-    use crate::git::rev::filters::CommitFilter;
     use crate::git::tag::Tag;
     use crate::settings::{MonoRepoPackage, Settings};
     use crate::test_helpers::{git_init_no_gpg, git_tag};
+    use crate::Target;
 
     impl Commit {
         fn commit_fixture(commit_type: CommitType, is_breaking_change: bool) -> Self {
@@ -461,7 +461,7 @@ mod test {
         // Act
         let commits = repository
             .commits_since_tag(&base_version)?
-            .apply_filter(CommitFilter::Global)?;
+            .set_target(Target::Monorepo { manual: false })?;
         let tag = base_version.get_version_from_commit_range(&commits);
 
         // Assert
@@ -486,7 +486,7 @@ mod test {
         // Act
         let commits = repository
             .commits_since_tag(&base_version)?
-            .apply_filter(CommitFilter::Global)?;
+            .set_target(Target::Monorepo { manual: false })?;
         let tag = base_version.auto_global_bump(&commits, Some(Increment::Minor))?;
 
         // Assert
@@ -510,7 +510,7 @@ mod test {
         // Act
         let commits = repository
             .commits_since_tag(&base_version)?
-            .apply_filter(CommitFilter::Global)?;
+            .set_target(Target::Monorepo { manual: false })?;
         let tag = base_version.auto_global_bump(&commits, None)?;
 
         // Assert
@@ -539,7 +539,7 @@ mod test {
         // Act
         let commits = repository
             .commits_since_tag(&base_version)?
-            .apply_filter(CommitFilter::Global)?;
+            .set_target(Target::Monorepo { manual: false })?;
         let tag = base_version.auto_global_bump(&commits, Some(Increment::Minor))?;
 
         // Assert
@@ -568,7 +568,7 @@ mod test {
         // Act
         let commits = repository
             .commits_since_tag(&base_version)?
-            .apply_filter(CommitFilter::Global)?;
+            .set_target(Target::Monorepo { manual: false })?;
         let tag = base_version.auto_global_bump(&commits, Some(Increment::Patch))?;
 
         // Assert
@@ -597,7 +597,7 @@ mod test {
         // Act
         let commits = repository
             .commits_since_tag(&base_version)?
-            .apply_filter(CommitFilter::Global)?;
+            .set_target(Target::Monorepo { manual: false })?;
         let tag = base_version.auto_global_bump(&commits, Some(Increment::Minor))?;
 
         // Assert
@@ -629,7 +629,7 @@ mod test {
         // Act
         let commits = repository
             .commits_since_tag(&base_version)?
-            .apply_filter(CommitFilter::Global)?;
+            .set_target(Target::Monorepo { manual: false })?;
         let tag = base_version.auto_global_bump(&commits, Some(Increment::Minor))?;
 
         // Assert

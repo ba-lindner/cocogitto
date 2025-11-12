@@ -3,7 +3,8 @@ use std::fmt::{Display, Formatter};
 use git2::Oid;
 use serde::{Serialize, Serializer};
 
-use crate::git::{rev::filters::CommitFilter, tag::Tag};
+use crate::git::tag::Tag;
+use crate::Target;
 
 /// A wrapper for git2 oid including tags and HEAD ref
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -24,8 +25,8 @@ impl CommitInfo {
         }
     }
 
-    pub fn into_release_version(self, filter: CommitFilter) -> ReleaseVersion {
-        let tag = self.tags.into_iter().find(|tag| filter.matches_tag(tag));
+    pub fn into_release_version(self, target: Target) -> ReleaseVersion {
+        let tag = self.tags.into_iter().find(|tag| target.matches_tag(tag));
         ReleaseVersion { id: self.oid, tag }
     }
 }

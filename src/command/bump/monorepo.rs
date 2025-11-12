@@ -1,22 +1,14 @@
-use std::path::Path;
-
 use crate::command::bump::{BumpOptions, BumpResult, WithPkg};
-
 use crate::conventional::changelog::release::PackageBump;
-use crate::conventional::changelog::template::{MonoRepoContext, PackageContext};
-use crate::conventional::changelog::ReleaseType;
-
 use crate::conventional::version::{Increment, IncrementCommand};
-
 use crate::git::error::TagError;
+use crate::git::oid::ReleaseVersion;
 use crate::git::tag::Tag;
 use crate::settings::{HookType, MonoRepoPackage};
 use crate::{CocoGitto, SETTINGS};
 use anyhow::{bail, Result};
-
 use log::warn;
-
-use crate::git::oid::ReleaseVersion;
+use std::path::Path;
 
 #[derive(Debug)]
 pub struct PackageData<'p> {
@@ -110,7 +102,7 @@ impl CocoGitto {
             IncrementCommand::Auto
         };
 
-        let mut bump_res = opts.get_new_version(&self.repository, false, Some(increment))?;
+        let mut bump_res = self.get_new_version(&opts, false, Some(increment))?;
 
         if opts.dry_run {
             for bump in bumps {
@@ -138,12 +130,7 @@ impl CocoGitto {
             .packages
             .sort_by_key(|package| package.package_name);
 
-        self.render_changelog(
-            &bump_res,
-            ReleaseType::MonoRepo(MonoRepoContext {
-                package_lock: false,
-            }),
-        )?;
+        self.render_changelog(&bump_res)?;
 
         let hook_result = self.run_hooks(Some(&bump_res), HookType::PreBump, opts.hooks_config);
 
@@ -177,7 +164,7 @@ impl CocoGitto {
         // Get package bumps
         let bumps = self.get_current_packages()?;
 
-        let mut bump_res = opts.get_new_version(&self.repository, false, None)?;
+        let mut bump_res = self.get_new_version(&opts, false, None)?;
 
         if opts.dry_run {
             print!("{}", bump_res.next);
@@ -197,10 +184,7 @@ impl CocoGitto {
             .packages
             .sort_by_key(|package| package.package_name);
 
-        self.render_changelog(
-            &bump_res,
-            ReleaseType::MonoRepo(MonoRepoContext { package_lock: true }),
-        )?;
+        self.render_changelog(&bump_res)?;
 
         let hook_result = self.run_hooks(Some(&bump_res), HookType::PreBump, opts.hooks_config);
 
@@ -249,7 +233,7 @@ impl CocoGitto {
             };
             let opts = opts.clone().set_package((package_name.as_str(), package));
 
-            let bump_res = opts.get_new_version(&self.repository, true, Some(increment))?;
+            let bump_res = self.get_new_version(&opts, true, Some(increment))?;
             if bump_res.increment() == Increment::NoBump {
                 continue;
             }
@@ -267,12 +251,7 @@ impl CocoGitto {
         package_bumps: &mut Vec<BumpResult<WithPkg>>,
     ) -> Result<()> {
         for bump in package_bumps {
-            self.render_changelog(
-                bump,
-                ReleaseType::Package(PackageContext {
-                    package_name: bump.package.0,
-                }),
-            )?;
+            self.render_changelog(bump)?;
 
             let hook_result = self.run_hooks(Some(bump), HookType::PreBump, hooks_config);
 

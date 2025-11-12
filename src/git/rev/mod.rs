@@ -1,12 +1,11 @@
 use git2::Commit;
 use itertools::Itertools as _;
 
-use crate::git::{
-    error::Git2Error,
-    oid::{CommitInfo, ReleaseVersion},
-    repository::Repository,
-    rev::{filters::CommitFilter, revspec::RevSpecPattern2},
-};
+use crate::git::error::Git2Error;
+use crate::git::oid::{CommitInfo, ReleaseVersion};
+use crate::git::repository::Repository;
+use crate::git::rev::revspec::RevSpecPattern2;
+use crate::Target;
 
 pub mod cache;
 pub mod filters;
@@ -18,7 +17,7 @@ pub struct CommitIter<'repo> {
     commits: Vec<(CommitInfo, Commit<'repo>)>,
     spec: RevSpecPattern2,
     repository: &'repo Repository,
-    filter: CommitFilter<'repo>,
+    pub(crate) target: Target,
 }
 
 impl<'repo> CommitIter<'repo> {
@@ -50,21 +49,21 @@ impl<'repo> CommitIter<'repo> {
         let cache = self.repository.get_cache();
         let from = cache
             .get_info(self.spec.from.unwrap_or(cache.first))
-            .into_release_version(self.filter);
+            .into_release_version(self.target);
         let to = cache
             .get_info(self.spec.to.unwrap_or(cache.head))
-            .into_release_version(self.filter);
+            .into_release_version(self.target);
         (from, to)
     }
 
-    pub(crate) fn apply_filter(mut self, filter: CommitFilter<'repo>) -> Result<Self, Git2Error> {
-        if self.filter == filter {
+    pub(crate) fn set_target(mut self, target: Target) -> Result<Self, Git2Error> {
+        if self.target == target {
             return Ok(self);
         }
-        self.filter = filter;
+        self.target = target;
         let to_retain = self
             .iter_commits()
-            .map(|commit| filter.matches_commit(self.repository, commit))
+            .map(|commit| target.matches_commit(self.repository, commit))
             .collect::<Result<Vec<_>, _>>()?;
         assert_eq!(to_retain.len(), self.commits.len());
         let mut to_retain = to_retain.into_iter();
@@ -78,7 +77,7 @@ impl<'repo> CommitIter<'repo> {
             .commits
             .iter()
             .flat_map(|(info, _)| &info.tags)
-            .filter(|tag| self.filter.matches_tag(tag))
+            .filter(|tag| self.target.matches_tag(tag))
             .sorted()
             .map(|tag| tag.oid)
             .collect::<Vec<_>>();
@@ -94,7 +93,7 @@ impl<'repo> CommitIter<'repo> {
                         from: last_from,
                         to: oid,
                     })?
-                    .apply_filter(self.filter)?,
+                    .set_target(self.target)?,
             );
             last_from = oid;
         }
