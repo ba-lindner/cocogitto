@@ -1,0 +1,9 @@
+{% import "commit" as commit -%}
+{% import "extra" as extra -%}
+{% import "header" as header -%}
+
+{%- macro changelog(type="simple", target="standard") -%}
+{{ header::with_type(from=from, version=version, type=type) -}}
+{{ extra::with_target(target=target, type=type) -}}
+{{ commit::list(commits=commits, type=type) -}}
+{%- endmacro changelog -%}

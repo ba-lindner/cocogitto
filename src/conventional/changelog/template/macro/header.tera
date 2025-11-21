@@ -1,0 +1,38 @@
+{%- macro simple(from, version) -%}
+{% if version.tag -%}
+    ## {{ version.tag }} - {{ date | date(format="%Y-%m-%d") }}
+{% else -%}
+    {% set from = commits | last -%}
+    {% set from_shorthand = from.id | truncate(length=7, end="") -%}
+    {% set to_shorthand = version.id | truncate(length=7, end="") -%}
+    ## Unreleased ({{ from_shorthand ~ ".." ~ to_shorthand }})
+{% endif -%}
+{%- endmacro simple -%}
+
+{%- macro remote(from, version) -%}
+{% if version.tag and from.tag -%}
+    ## [{{ version.tag }}]({{repository_url ~ "/compare/" ~ from.tag ~ ".." ~ version.tag}}) - {{ date | date(format="%Y-%m-%d") }}
+{% elif version.tag and from.id -%}
+    ## [{{ version.tag }}]({{repository_url ~ "/compare/" ~ from.id ~ ".." ~ version.tag}}) - {{ date | date(format="%Y-%m-%d") }}
+{% else -%}
+    {% set from_shorthand = from.id | truncate(length=7, end="") -%}
+    {% set to_shorthand = version.id | truncate(length=7, end="") -%}
+    ## Unreleased ([{{ from_shorthand ~ ".." ~ to_shorthand }}]({{repository_url ~ "/compare/" ~ from_shorthand ~ ".." ~ to_shorthand}}))
+{% endif -%}
+{%- endmacro remote -%}
+
+{%- macro full_hash(from, version) -%}
+{#- yes this is empty, full_hash doesn't have a header -#}
+{%- endmacro fullhash -%}
+
+{%- macro with_type(from, version, type="simple") -%}
+    {% if type == "simple" -%}
+        {{ self::simple(from=from, version=version) -}}
+    {% elif type == "remote" -%}
+        {{ self::remote(from=from, version=version) -}}
+    {% elif type == "full_hash" -%}
+        {{ self::full_hash(from=from, version=version) -}}
+    {% else -%}
+        {{ custom::header(from=from, version=version) -}}
+    {% endif -%}
+{%- endmacro with_type -%}

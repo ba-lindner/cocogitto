@@ -1,0 +1,16 @@
+{% import "extra" as extra -%}
+{% import "header" as header -%}
+
+{%- macro commit(commit) -%}
+    {% if commit.author -%}
+        {% set author = "@" ~ commit.author -%}
+    {% else -%}
+        {% set author = commit.signature -%}
+    {% endif -%}
+    {% set shorthand = commit.id | truncate(length=7, end="") -%}
+    - {%if commit.scope %}<**{{ commit.scope }}**> {% endif %}{{ commit.summary }} - <{{shorthand}}> - {{ author }}
+{% endmacro custom -%}
+
+{{ header::simple(from=from, version=version) -}}
+{{ extra::monorepo(remote=true) -}}
+{%- include "base" -%}

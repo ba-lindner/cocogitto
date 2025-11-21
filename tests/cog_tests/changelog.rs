@@ -1232,3 +1232,75 @@ fn tags_on_branches() -> Result<()> {
 
     Ok(())
 }
+
+#[sealed_test]
+fn get_changelog_with_custom_template_using_macros() -> Result<()> {
+    // Arrange
+    let crate_dir = env!("CARGO_MANIFEST_DIR");
+    let template = PathBuf::from(crate_dir).join("tests/cog_tests/template_new.tera");
+
+    git_init()?;
+
+    let cog_toml = indoc!(
+        "[changelog]
+        remote = \"github.com\"
+        repository = \"test\"
+        owner = \"test\"
+
+        [packages.pkg]
+        path = \"pkg\""
+    );
+
+    git_add(cog_toml, "cog.toml")?;
+    git_commit("chore: init")?;
+    git_commit("feat(scope1): start")?;
+    git_commit("feat: feature 1")?;
+
+    git_tag("1.0.0")?;
+    git_tag("pkg-0.1.0")?;
+
+    git_add(".", "pkg/feat")?;
+    git_commit("feat: feature 2")?;
+    git_add(".", "global")?;
+    let commit_four = git_commit_short("fix: bug fix 1")?;
+    git_add(",", "pkg/feat")?;
+    git_add(",", "global")?;
+    let commit_five = git_commit_short("chore(version): 2.0.0")?;
+
+    git_tag("2.0.0")?;
+    git_tag("pkg-0.2.0")?;
+
+    // Act
+    let changelog = Command::cargo_bin("cog")?
+        .arg("changelog")
+        .arg("--at")
+        .arg("2.0.0")
+        .arg("-t")
+        .arg(template)
+        // Assert
+        .assert()
+        .success();
+
+    let changelog = changelog.get_output();
+    let changelog = String::from_utf8_lossy(&changelog.stdout);
+    let today = Utc::now().date_naive();
+
+    assert_doc_eq!(
+        changelog.as_ref(),
+        "## 2.0.0 - {today}
+        ### Package updates
+        - [pkg](pkg) bumped to [pkg-0.2.0](https://github.com/test/test/compare/pkg-0.1.0..pkg-0.2.0)
+        ### Global changes
+        #### Bug Fixes
+        - bug fix 1 - <{commit_four}> - Tom
+        #### Miscellaneous Chores
+        - <**version**> 2.0.0 - <{commit_five}> - Tom
+
+        
+        ",
+        today = today,
+        commit_four = commit_four,
+        commit_five = commit_five,
+    );
+    Ok(())
+}

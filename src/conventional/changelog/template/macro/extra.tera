@@ -1,0 +1,63 @@
+{%- macro standard() -%}
+{%- endmacro standard -%}
+
+{%- macro package() -%}
+{%- endmacro package -%}
+
+{%- macro package_bump(package, lock=false, remote=false) -%}
+    {% if lock -%}
+        {% set action = "locked" -%}
+    {% else -%}
+        {% set action = "bumped" -%}
+    {% endif -%}
+    {% if remote -%}
+        {% set name = "[" ~ package.package_name ~ "](" ~ package.package_path ~ ")" -%}
+        {% if lock -%}
+            {% set bump = "[" ~ package.version.tag ~ "](" ~ repository_url ~ "/tree/" ~ package.version.tag ~ ")" -%}
+        {% elif package.from.tag -%}
+            {% set bump = "[" ~ package.version.tag ~ "](" ~ repository_url ~ "/compare/" ~ package.from.tag ~ ".." ~ package.version.tag ~ ")" -%}
+        {% else -%}
+            {% set bump = "[" ~ package.version.tag ~ "](" ~ repository_url ~ "/compare/" ~ package.from.id ~ ".." ~ package.version.tag ~ ")" -%}
+        {% endif -%}
+    {% else -%}
+        {% set name = package.package_name -%}
+        {% set bump = package.version.tag -%}
+    {% endif -%}
+    - {{ name }} {{ action }} to {{ bump }}
+{% endmacro package_bump -%}
+
+{%- macro package_list(packages, lock=false, remote=false) -%}
+{% if lock -%}
+    ### Packages
+{% else -%}
+    ### Package updates
+{% endif -%}
+{% for package in packages | filter(attribute="version.tag") -%}
+    {{ self::package_bump(package=package, lock=lock, remote=remote) -}}
+{% endfor -%}
+{%- endmacro package_list -%}
+
+{%- macro monorepo(remote=false) -%}
+{{ self::package_list(packages=packages, lock=package_lock, remote=remote) -}}
+### Global changes
+{% endmacro monorepo -%}
+
+{%- macro unified(remote=false) -%}
+{{ self::package_list(packages=packages, lock=package_lock, remote=remote) -}}
+### All changes
+{% endmacro unified -%}
+
+{%- macro with_target(target="standard", type="simple") -%}
+    {% set remote = type == "remote" -%}
+    {% if target == "standard" -%}
+        {{ self::standard() -}}
+    {% elif target == "package" -%}
+        {{ self::package() -}}
+    {% elif target == "monorepo" -%}
+        {{ self::monorepo(remote=remote) -}}
+    {% elif target == "unified" -%}
+        {{ self::unified(remote=remote) -}}
+    {% else -%}
+        {{ custom::extra() -}}
+    {% endif -%}
+{%- endmacro with_target -%}

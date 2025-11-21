@@ -24,8 +24,18 @@ impl Renderer {
     pub fn try_new(template: Template) -> Result<Self, tera::Error> {
         let mut tera = Tera::default();
 
-        tera.add_raw_template(MACROS_TEMPLATE_NAME, MACROS_TEMPLATE)?;
-        tera.add_raw_template(template.name(), template.content())?;
+        const MACROS: [(&str, &str); 7] = [
+            (MACROS_TEMPLATE_NAME, MACROS_TEMPLATE),
+            ("custom", ""),
+            ("base", include_str!("template/base.tera")),
+            ("header", include_str!("template/macro/header.tera")),
+            ("extra", include_str!("template/macro/extra.tera")),
+            ("commit", include_str!("template/macro/commit.tera")),
+            ("common", include_str!("template/macro/common.tera")),
+        ];
+
+        tera.add_raw_templates(MACROS)?;
+        tera.add_raw_template(template.name(), &template.content())?;
         tera.register_filter("upper_first", Self::upper_first_filter);
         tera.register_filter("unscoped", Self::unscoped);
         tera.register_filter("group_by_type", Self::group_by_type);

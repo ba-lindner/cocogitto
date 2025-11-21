@@ -20,6 +20,16 @@ pub struct PredefinedTemplate {
     pub kind: TplKind,
 }
 
+// impl PredefinedTemplate {
+//     fn parse_name(name: &str) {
+//         let (target, kind) = ["package", "monorepo", "unified"]
+//             .iter()
+//             .filter_map(|target| Some((*target, &name.strip_prefix(target)?[1..])))
+//             .next()
+//             .unwrap_or(("standard", name));
+//     }
+// }
+
 macro_rules! predefined_templates {
     ($($var:ident : $name:literal $content:literal $target:ident $({$targ:ident : $val:expr})? $kind:ident),+ $(,)?) => {
 
@@ -93,10 +103,19 @@ impl Template {
         }
     }
 
-    pub fn content(&self) -> &str {
+    pub fn content(&self) -> String {
         match self {
-            Template::Predefined(tpl) => tpl.content,
-            Template::Custom(content) => content,
+            Template::Predefined(tpl) => format!("{{% import \"common\" as c %}}{{{{ c::changelog(type=\"{ttype}\", target=\"{target}\") }}}}", ttype = match tpl.kind {
+                TplKind::Default => "simple",
+                TplKind::Remote => "remote",
+                TplKind::FullHash => "full_hash",
+            }, target = match tpl.target {
+                Target::Standard => "standard",
+                Target::Package { .. } => "package",
+                Target::Monorepo { .. } => "monorepo",
+                Target::Unified { .. } => "unified",
+            }),
+            Template::Custom(content) => content.clone(),
         }
     }
 }
