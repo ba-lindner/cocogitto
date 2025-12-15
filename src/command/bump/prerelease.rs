@@ -49,37 +49,34 @@ pub(super) fn increment_prerelease(
     let (prefix, suffix) = (pattern_parts[0], pattern_parts[1]);
     let initial_prerelease = format!("{}1{}", prefix, suffix);
 
-    let Some(current_prerelease) = current_prerelease else {
-        return Ok(initial_prerelease);
-    };
-
-    // Check if the current pre-release was expecting a different version to what the next pre-release expects
-    if core_version(&current_prerelease.version) < next.version {
-        return Ok(initial_prerelease);
-    }
-
-    let pre_to_increment = current_prerelease.version.pre.as_str();
-
-    // Check if the current pre-release matches the pattern format
-    if !pre_to_increment.starts_with(prefix)
-        || !pre_to_increment.ends_with(suffix)
-        || pre_to_increment.len() < prerelease.len()
-    {
-        return Ok(initial_prerelease);
-    }
-
-    // Try to extract the numeric identifier
-    let num = &pre_to_increment[prefix.len()..pre_to_increment.len() - suffix.len()];
-    let Ok(num) = num.parse::<u64>() else {
-        return Ok(initial_prerelease);
-    };
-
-    // Reconsturct the pre-release label, incrementing the numeric identifier
-    Ok(format!("{}{}{}", prefix, num + 1, suffix))
+    let new_prerelease = current_prerelease
+        .as_ref()
+        .and_then(|current| current.increment_pre_by_pattern(prefix, suffix, next))
+        .unwrap_or(initial_prerelease);
+    Ok(new_prerelease)
 }
 
-fn core_version(version: &Version) -> Version {
-    Version::new(version.major, version.minor, version.patch)
+impl Tag {
+    fn increment_pre_by_pattern(&self, prefix: &str, suffix: &str, next: &Tag) -> Option<String> {
+        // Check if the current pre-release was expecting a different version to what the next pre-release expects
+        if self.core_version() != next.core_version() {
+            return None;
+        }
+
+        let pre_to_increment = self.version.pre.as_str();
+        // Try to extract the numeric identifier
+        // Also checks if the current pre-release matches the pattern format
+        let num: u64 = pre_to_increment
+            .strip_prefix(prefix)?
+            .strip_suffix(suffix)?
+            .parse()
+            .ok()?;
+        Some(format!("{prefix}{}{suffix}", num + 1))
+    }
+
+    fn core_version(&self) -> Version {
+        Version::new(self.version.major, self.version.minor, self.version.patch)
+    }
 }
 
 #[cfg(test)]
