@@ -3,7 +3,7 @@ use conventional_commit_parser::commit::Footer;
 use serde::Serialize;
 
 use crate::conventional::commit::Commit;
-use crate::git::oid::OidOf;
+use crate::git::oid::ReleaseVersion;
 use crate::git::rev::CommitIter;
 use crate::{settings, SETTINGS};
 use colored::Colorize;
@@ -13,89 +13,107 @@ use log::warn;
 
 #[derive(Debug, Serialize)]
 pub struct Release<'a> {
-    pub version: OidOf,
-    pub from: OidOf,
+    pub version: ReleaseVersion,
+    pub from: ReleaseVersion,
     pub date: NaiveDateTime,
     pub commits: Vec<ChangelogCommit<'a>>,
     pub previous: Option<Box<Release<'a>>>,
+}
+
+// for now, the only reference in releases is the author name which is static (from settings)
+fn build_release_impl(
+    commits: CommitIter<'_>,
+    package: Option<&str>,
+) -> Result<Release<'static>, ChangelogError> {
+    let mut releases = vec![];
+    let mut commit_iter = commits.into_iter().rev().peekable();
+
+    while let Some((_oid, _commit)) = commit_iter.peek() {
+        let mut release_commits = vec![];
+
+        for (oid, commit) in commit_iter.by_ref() {
+            let version = oid.into_release_version(package);
+            if version.tag.is_some() {
+                release_commits.push((version, commit));
+                break;
+            }
+            release_commits.push((version, commit));
+        }
+
+        release_commits.reverse();
+        releases.push(release_commits);
+    }
+
+    let mut current = None;
+
+    for release in releases {
+        let next = Release {
+            version: release.first().unwrap().0.clone(),
+            from: current
+                .as_ref()
+                .map(|current: &Release| current.version.clone())
+                .unwrap_or(release.last().unwrap().0.clone()),
+            date: Utc::now().naive_local(),
+            commits: release
+                .iter()
+                .filter(|(version, _)| {
+                    !SETTINGS.changelog.omit_version_commit || version.tag.is_none()
+                })
+                .filter(|(_commit, commit)| commit.message().is_some())
+                .filter(|(_commit, commit)| {
+                    if SETTINGS.ignore_merge_commits {
+                        !commit.message().unwrap().starts_with("Merge")
+                    } else {
+                        true
+                    }
+                })
+                .filter(|(_commit, commit)| {
+                    if SETTINGS.ignore_fixup_commits {
+                        !commit.message().unwrap().starts_with("fixup!")
+                            && !commit.message().unwrap().starts_with("squash!")
+                            && !commit.message().unwrap().starts_with("amend!")
+                    } else {
+                        true
+                    }
+                })
+                .filter_map(|(_, commit)| match Commit::from_git_commit(commit) {
+                    Ok(commit) => {
+                        if !commit.should_omit() {
+                            Some(ChangelogCommit::from(commit))
+                        } else {
+                            None
+                        }
+                    }
+                    Err(err) => {
+                        let err = err.to_string().red();
+                        warn!("{}", err);
+                        None
+                    }
+                })
+                .collect(),
+            previous: current.map(Box::new),
+        };
+
+        current = Some(next);
+    }
+
+    current.ok_or(ChangelogError::EmptyRelease)
+}
+
+impl Release<'_> {
+    pub fn build_package(
+        commits: CommitIter<'_>,
+        package: &str,
+    ) -> Result<Release<'static>, ChangelogError> {
+        build_release_impl(commits, Some(package))
+    }
 }
 
 impl TryFrom<CommitIter<'_>> for Release<'_> {
     type Error = ChangelogError;
 
     fn try_from(commits: CommitIter<'_>) -> Result<Self, Self::Error> {
-        let mut releases = vec![];
-        let mut commit_iter = commits.into_iter().rev().peekable();
-
-        while let Some((_oid, _commit)) = commit_iter.peek() {
-            let mut release_commits = vec![];
-
-            for (oid, commit) in commit_iter.by_ref() {
-                if matches!(oid, OidOf::Tag(_)) {
-                    release_commits.push((oid, commit));
-                    break;
-                }
-                release_commits.push((oid, commit));
-            }
-
-            release_commits.reverse();
-            releases.push(release_commits);
-        }
-
-        let mut current = None;
-
-        for release in releases {
-            let next = Release {
-                version: release.first().unwrap().0.clone(),
-                from: current
-                    .as_ref()
-                    .map(|current: &Release| current.version.clone())
-                    .unwrap_or(release.last().unwrap().0.clone()),
-                date: Utc::now().naive_local(),
-                commits: release
-                    .iter()
-                    .filter(|(oid_of, _)| {
-                        !SETTINGS.changelog.omit_version_commit || !matches!(oid_of, OidOf::Tag(_))
-                    })
-                    .filter(|(_commit, commit)| commit.message().is_some())
-                    .filter(|(_commit, commit)| {
-                        if SETTINGS.ignore_merge_commits {
-                            !commit.message().unwrap().starts_with("Merge")
-                        } else {
-                            true
-                        }
-                    })
-                    .filter(|(_commit, commit)| {
-                        if SETTINGS.ignore_fixup_commits {
-                            !commit.message().unwrap().starts_with("fixup!")
-                                && !commit.message().unwrap().starts_with("squash!")
-                                && !commit.message().unwrap().starts_with("amend!")
-                        } else {
-                            true
-                        }
-                    })
-                    .filter_map(|(_, commit)| match Commit::from_git_commit(commit) {
-                        Ok(commit) => {
-                            if !commit.should_omit() {
-                                Some(ChangelogCommit::from(commit))
-                            } else {
-                                None
-                            }
-                        }
-                        Err(err) => {
-                            let err = err.to_string().red();
-                            warn!("{}", err);
-                            None
-                        }
-                    })
-                    .collect(),
-                previous: current.map(Box::new),
-            };
-
-            current = Some(next);
-        }
-
-        current.ok_or(ChangelogError::EmptyRelease)
+        build_release_impl(commits, None)
     }
 }
 
@@ -148,7 +166,6 @@ mod test {
         MonoRepoContext, PackageBumpContext, PackageContext, RemoteContext, Template, TemplateKind,
     };
     use crate::conventional::commit::Commit;
-    use crate::git::oid::OidOf;
     use crate::git::repository::Repository;
 
     use crate::git::tag::Tag;
@@ -671,8 +688,8 @@ mod test {
             )
             .unwrap();
             Release {
-                version: OidOf::Tag(version),
-                from: OidOf::Tag(from),
+                version: version.into(),
+                from: from.into(),
                 date,
                 commits: vec![
                     ChangelogCommit {
@@ -748,26 +765,38 @@ mod test {
                 PackageBumpContext {
                     package_name: "one",
                     package_path: "crates/one",
-                    version: OidOf::Tag(Tag::from_str(
+                    version: Tag::from_str(
                         "0.1.0",
                         Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
-                    )?),
-                    from: Some(OidOf::Tag(Tag::from_str(
-                        "0.2.0",
-                        Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
-                    )?)),
+                    )?
+                    .into(),
+                    from: Some(
+                        Tag::from_str(
+                            "0.2.0",
+                            Some(
+                                Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap(),
+                            ),
+                        )?
+                        .into(),
+                    ),
                 },
                 PackageBumpContext {
                     package_name: "two",
                     package_path: "crates/two",
-                    version: OidOf::Tag(Tag::from_str(
+                    version: Tag::from_str(
                         "0.2.0",
                         Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
-                    )?),
-                    from: Some(OidOf::Tag(Tag::from_str(
-                        "0.3.0",
-                        Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
-                    )?)),
+                    )?
+                    .into(),
+                    from: Some(
+                        Tag::from_str(
+                            "0.3.0",
+                            Some(
+                                Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap(),
+                            ),
+                        )?
+                        .into(),
+                    ),
                 },
             ],
         });
@@ -782,19 +811,21 @@ mod test {
                 PackageBumpContext {
                     package_name: "one",
                     package_path: "crates/one",
-                    version: OidOf::Tag(Tag::from_str(
+                    version: Tag::from_str(
                         "0.1.0",
                         Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
-                    )?),
+                    )?
+                    .into(),
                     from: None,
                 },
                 PackageBumpContext {
                     package_name: "two",
                     package_path: "crates/two",
-                    version: OidOf::Tag(Tag::from_str(
+                    version: Tag::from_str(
                         "0.2.0",
                         Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
-                    )?),
+                    )?
+                    .into(),
                     from: None,
                 },
             ],

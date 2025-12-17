@@ -41,9 +41,9 @@ impl CocoGitto {
                 continue;
             }
 
-            let from = Some(range.from_oid());
+            let from = Some(range.from_oid().into_release_version(Some(package_name)));
 
-            let version = range.to_oid();
+            let version = range.to_oid().into_release_version(Some(package_name));
 
             let context = PackageBumpContext {
                 package_name,
@@ -67,6 +67,7 @@ impl CocoGitto {
         };
 
         let changelog = Release::try_from(commit_range)?;
+
         changelog
             .into_markdown(template, ReleaseType::MonoRepo(context))
             .map_err(Into::into)
