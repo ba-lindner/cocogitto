@@ -168,6 +168,7 @@ mod test {
     use crate::conventional::commit::Commit;
     use crate::git::repository::Repository;
 
+    use crate::git::rev::revspec::RevSpecPattern2;
     use crate::git::tag::Tag;
 
     macro_rules! assert_doc_eq {
@@ -182,7 +183,7 @@ mod test {
     #[test]
     fn should_get_a_release() -> anyhow::Result<()> {
         let repo = Repository::open(".")?;
-        let iter = repo.revwalk("..")?;
+        let iter = repo.revwalk(RevSpecPattern2::full())?;
         let release = Release::try_from(iter);
         assert_that!(release)
             .is_ok()
