@@ -30,6 +30,7 @@ pub mod git;
 pub mod hook;
 pub mod log;
 pub mod settings;
+pub mod target;
 
 pub const DEFAULT_CONFIG_PATH: &str = "cog.toml";
 static CONFIG_PATH: OnceLock<String> = OnceLock::new();
