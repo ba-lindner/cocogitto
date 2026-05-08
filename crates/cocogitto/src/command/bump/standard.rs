@@ -20,17 +20,15 @@ impl CocoGitto {
             return Ok(());
         }
 
-        let tag = Tag::create(bump_res.next.version, None);
+        let tag = Tag::create(bump_res.next.version.clone(), None);
 
         if opts.dry_run {
             print!("{tag}");
             return Ok(());
         }
 
-        let pattern = self.get_bump_revspec(&bump_res.current);
-
         if !SETTINGS.disable_changelog {
-            let changelog = self.get_changelog_with_target_version(&pattern, tag.clone())?;
+            let changelog = self.get_changelog_with_target_version(&bump_res)?;
             changelog.pretty_print_bump_summary()?;
 
             let path = settings::changelog_path();

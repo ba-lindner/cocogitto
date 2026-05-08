@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::command::bump::{BumpOptions, HookRunOptions};
+use crate::command::bump::{BumpOptions, BumpResult, HookRunOptions};
 use crate::conventional::changelog::context::{
     MonoRepoContext, PackageBumpContext, PackageContext,
 };
@@ -23,7 +23,7 @@ struct PackageBumpData {
     package_name: String,
     package_path: String,
     public_api: bool,
-    current: Tag,
+    res: BumpResult,
     old_version: Option<HookVersion>,
     new_version: HookVersion,
     increment: Increment,
@@ -66,7 +66,7 @@ impl CocoGitto {
 
         if opts.dry_run {
             for bump in bumps {
-                println!("{}", bump.new_version.prefixed_tag)
+                println!("{}", bump.res.next)
             }
             return Ok(());
         }
@@ -98,7 +98,7 @@ impl CocoGitto {
         if SETTINGS.generate_mono_repository_package_tags {
             for bump in &bumps {
                 self.repository
-                    .create_tag(&bump.new_version.prefixed_tag, disable_bump_commit)?;
+                    .create_tag(&bump.res.next, disable_bump_commit)?;
             }
         }
 
@@ -188,12 +188,7 @@ impl CocoGitto {
         }
 
         if !SETTINGS.disable_changelog {
-            let pattern = self.get_bump_revspec(&bump_res.current);
-            let changelog = self.get_monorepo_global_changelog_for_version(
-                &pattern,
-                OidOf::Tag(bump_res.current.clone()),
-                tag.clone(),
-            )?;
+            let changelog = self.get_monorepo_global_changelog_for_version(&bump_res)?;
 
             changelog.pretty_print_bump_summary()?;
 
@@ -305,7 +300,7 @@ impl CocoGitto {
 
         let bump_res = opts.get_new_version(&self.repository, None, false, None)?;
 
-        let tag = Tag::create(bump_res.next.version, None);
+        let tag = Tag::create(bump_res.next.version.clone(), None);
 
         if opts.dry_run {
             print!("{tag}");
@@ -323,12 +318,7 @@ impl CocoGitto {
         }
 
         if !SETTINGS.disable_changelog {
-            let pattern = self.get_bump_revspec(&bump_res.current);
-            let changelog = self.get_monorepo_global_changelog_for_version(
-                &pattern,
-                OidOf::Tag(bump_res.current.clone()),
-                tag.clone(),
-            )?;
+            let changelog = self.get_monorepo_global_changelog_for_version(&bump_res)?;
 
             changelog.pretty_print_bump_summary()?;
 
@@ -506,7 +496,10 @@ impl CocoGitto {
                 continue;
             }
 
-            let tag = Tag::create(bump_res.next.version, Some(package_name.to_string()));
+            let tag = Tag::create(
+                bump_res.next.version.clone(),
+                Some(package_name.to_string()),
+            );
             let increment = tag.get_increment_from(&bump_res.current);
 
             if let Some(increment) = increment {
@@ -520,7 +513,7 @@ impl CocoGitto {
                     package_name: package_name.to_string(),
                     package_path: package.path.to_string_lossy().to_string(),
                     public_api: package.public_api,
-                    current: bump_res.current,
+                    res: bump_res,
                     old_version,
                     new_version: HookVersion::new(tag),
                     increment,
@@ -539,7 +532,7 @@ impl CocoGitto {
     ) -> Result<()> {
         for bump in package_bumps {
             let package_name = &bump.package_name;
-            let tag = &bump.new_version.prefixed_tag;
+            let tag = &bump.res.next;
 
             let package = SETTINGS
                 .monorepo
@@ -548,12 +541,8 @@ impl CocoGitto {
                 .expect("package exists");
 
             if !SETTINGS.disable_changelog {
-                let pattern = self.get_bump_revspec(&bump.current);
-                let changelog = self.get_package_changelog_with_target_version(
-                    &pattern,
-                    tag.clone(),
-                    package_name.as_str(),
-                )?;
+                let changelog =
+                    self.get_package_changelog_with_target_version(&package_name, &bump.res)?;
 
                 changelog.pretty_print_bump_summary()?;
 

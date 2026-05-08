@@ -1,4 +1,5 @@
 use crate::command::bump::prerelease::increment_prerelease;
+use crate::conventional::changelog::error::ChangelogError;
 use crate::conventional::changelog::release::Release;
 use crate::conventional::commit::Commit;
 use crate::conventional::version::Increment;
@@ -9,6 +10,7 @@ use crate::conventional::error::BumpError as ConvBumpError;
 use crate::conventional::version::IncrementCommand;
 use crate::conventional::version::PreCommand;
 use crate::git::repository::Repository;
+use crate::git::rev::CommitIter;
 use crate::git::tag::{Tag, TagLookUpOptions};
 use crate::hook::{Hook, HookVersion, Hooks};
 use crate::settings::{HookType, MonoRepoPackage, Settings};
@@ -63,8 +65,10 @@ pub struct PackageBumpOptions<'a> {
     pub disable_bump_commit: bool,
 }
 
-struct BumpResult {
+#[derive(Debug)]
+pub struct BumpResult {
     current: Tag,
+    current_prerelease: Option<Tag>,
     next: Tag,
     had_commits: bool,
 }
@@ -124,7 +128,8 @@ impl<'a> BumpOptions<'a> {
                         pre_release.version_increment_from_commit_history(&commits)
                     {
                         return Ok(BumpResult {
-                            next: current.strip_metadata(),
+                            next: Tag::create(current.version.clone(), Some(package.to_string())),
+                            current_prerelease,
                             current,
                             had_commits: false,
                         });
@@ -162,7 +167,8 @@ impl<'a> BumpOptions<'a> {
 
         Ok(BumpResult {
             current,
-            next,
+            current_prerelease,
+            next: Tag::create(next.version, package.map(ToString::to_string)),
             had_commits,
         })
     }
@@ -253,11 +259,13 @@ impl<'a> HookRunOptions<'a> {
 }
 
 impl CocoGitto {
-    fn get_bump_revspec(&mut self, current_tag: &Tag) -> String {
-        if current_tag.is_zero() {
+    fn get_bump_revspec(&self, bump_res: &BumpResult) -> String {
+        if let Some(prerelease) = &bump_res.current_prerelease {
+            format!("{prerelease}..")
+        } else if bump_res.current.is_zero() {
             "..".to_string()
         } else {
-            format!("{current_tag}..")
+            format!("{}..", bump_res.current)
         }
     }
 
@@ -323,56 +331,65 @@ impl CocoGitto {
         Ok(())
     }
 
-    /// The target version is not created yet when generating the changelog.
-    pub fn get_changelog_with_target_version(&self, pattern: &str, tag: Tag) -> Result<Release> {
-        let commit_range = self.repository.revwalk(pattern)?;
-        let mut release = Release::try_from(commit_range)?;
-        release.version = OidOf::Tag(tag);
+    fn build_release(
+        &self,
+        commit_range: CommitIter<'_>,
+        bump_res: &BumpResult,
+        mut allow_empty: bool,
+    ) -> Result<Release> {
+        let version = OidOf::Tag(bump_res.next.clone());
+        allow_empty |=
+            bump_res.current_prerelease.is_some() && bump_res.next.version.pre.is_empty();
+        let release = match Release::try_from(commit_range) {
+            Ok(mut release) => {
+                release.version = version;
+                release
+            }
+            Err(ChangelogError::EmptyRelease) if allow_empty => {
+                let from = bump_res
+                    .current_prerelease
+                    .as_ref()
+                    .unwrap_or(&bump_res.current);
+                Release {
+                    version,
+                    from: OidOf::Tag(from.clone()),
+                    date: Default::default(),
+                    commits: vec![],
+                    previous: None,
+                }
+            }
+            Err(why) => bail!(why),
+        };
         Ok(release)
+    }
+
+    /// The target version is not created yet when generating the changelog.
+    fn get_changelog_with_target_version(&self, bump_res: &BumpResult) -> Result<Release> {
+        let pattern = self.get_bump_revspec(bump_res);
+        let commit_range = self.repository.revwalk(&pattern)?;
+        self.build_release(commit_range, bump_res, false)
     }
 
     /// The target package version is not created yet when generating the changelog.
-    pub fn get_package_changelog_with_target_version(
+    fn get_package_changelog_with_target_version(
         &self,
-        pattern: &str,
-        tag: Tag,
         package: &str,
+        bump_res: &BumpResult,
     ) -> Result<Release> {
+        let pattern = self.get_bump_revspec(bump_res);
         let commit_range = self
             .repository
-            .get_commit_range_for_package(pattern, package)?;
-
-        let mut release = Release::try_from(commit_range)?;
-        release.version = OidOf::Tag(tag);
-        Ok(release)
+            .get_commit_range_for_package(&pattern, package)?;
+        self.build_release(commit_range, bump_res, false)
     }
 
     /// The target global monorepo version is not created yet when generating the changelog.
-    pub fn get_monorepo_global_changelog_for_version(
-        &self,
-        pattern: &str,
-        from: OidOf,
-        tag: Tag,
-    ) -> Result<Release> {
+    fn get_monorepo_global_changelog_for_version(&self, bump_res: &BumpResult) -> Result<Release> {
+        let pattern = self.get_bump_revspec(bump_res);
         let commit_range = self
             .repository
-            .get_commit_range_for_monorepo_global(pattern)?;
-
-        let release = match Release::try_from(commit_range) {
-            Ok(mut release) => {
-                release.version = OidOf::Tag(tag);
-                release
-            }
-            Err(_) => Release {
-                version: OidOf::Tag(tag),
-                from,
-                date: Default::default(),
-                commits: vec![],
-                previous: None,
-            },
-        };
-
-        Ok(release)
+            .get_commit_range_for_monorepo_global(&pattern)?;
+        self.build_release(commit_range, bump_res, true)
     }
 
     fn run_hooks(&self, options: HookRunOptions) -> Result<()> {
