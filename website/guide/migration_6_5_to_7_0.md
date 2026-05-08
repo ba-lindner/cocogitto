@@ -26,6 +26,52 @@ my-package = { path = "crates/my-package", changelog_path = "crates/my-package/C
 another-package = { path = "crates/another-package" }
 ```
 
+## Changelog Template Context
+
+### Change: Field renamed in Changelog Template Context
+
+**What changed**: The field `footer` on the commit object was renamed to `footers`.
+
+**Impact**: If you're using a custom Changelog Template, you have to rename access to the field in your template.
+
+### Migration Steps
+
+#### Before (6.5.0):
+```tera
+{%- macro issues(commit) -%}
+    {%- set issues = commit.footer | group_by(attribute="token") | get(key="Issue", default=[]) | map(attribute="content") -%}
+                            ^^^^^^
+    {%- if issues | length > 0 -%}
+        {{- "(" -}}
+        {%- for issue in issues | unique -%}
+            {{- issue | split(pat=" ") | first | replace(from="#", to="") -}}
+            {%- if not loop.last %}
+                {{- ", " -}}
+            {%- endif -%}
+        {%- endfor -%}
+        {{- ") " -}}
+    {%- endif -%}
+{%- endmacro issues -%}
+```
+
+#### After (7.0.0):
+```tera
+{%- macro issues(commit) -%}
+    {%- set issues = commit.footers | group_by(attribute="token") | get(key="Issue", default=[]) | map(attribute="content") -%}
+                            ^^^^^^^
+    {%- if issues | length > 0 -%}
+        {{- "(" -}}
+        {%- for issue in issues | unique -%}
+            {{- issue | split(pat=" ") | first | replace(from="#", to="") -}}
+            {%- if not loop.last %}
+                {{- ", " -}}
+            {%- endif -%}
+        {%- endfor -%}
+        {{- ") " -}}
+    {%- endif -%}
+{%- endmacro issues -%}
+```
+
 ## Other Notable Changes
 
 ### 1. Package Resolver Implementation
