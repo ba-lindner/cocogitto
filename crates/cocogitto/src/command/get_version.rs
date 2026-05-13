@@ -4,7 +4,6 @@ use log::warn;
 use semver::Version;
 
 use crate::git::error::TagError;
-use crate::git::tag::TagLookUpOptions;
 use crate::CocoGitto;
 
 impl CocoGitto {
@@ -26,15 +25,9 @@ impl CocoGitto {
             None => None,
         };
 
-        let mut options = if let Some(pkg) = &package {
-            TagLookUpOptions::package(pkg)
-        } else {
-            TagLookUpOptions::default()
-        };
-        if include_prereleases {
-            options = options.include_pre_release();
-        }
-        let current_tag = self.repository.get_latest_tag(options);
+        let current_tag = self
+            .repository
+            .get_latest_tag(package.as_deref(), include_prereleases);
 
         let current_version = match current_tag {
             Ok(tag) => {

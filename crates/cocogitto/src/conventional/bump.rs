@@ -3,7 +3,6 @@ use semver::{BuildMetadata, Prerelease, Version};
 use crate::conventional::error::BumpError;
 use crate::conventional::version::Increment;
 use crate::git::rev::revspec::RevSpecPattern2;
-use crate::git::tag::TagLookUpOptions;
 use crate::{Commit, IncrementCommand, Repository, Tag};
 
 pub(crate) trait Bump {
@@ -126,8 +125,9 @@ impl Tag {
 
     fn get_version_from_commit_history(&self, repository: &Repository) -> Result<Tag, BumpError> {
         let changelog_start_oid = repository
-            .get_latest_tag_oid(TagLookUpOptions::default())
-            .ok();
+            .get_latest_tag(None, false)
+            .ok()
+            .and_then(|tag| tag.oid);
 
         let commits = repository.revwalk(RevSpecPattern2 {
             from: changelog_start_oid,
@@ -157,7 +157,7 @@ impl Tag {
         repository: &Repository,
     ) -> Result<Tag, BumpError> {
         let changelog_start_oid = repository
-            .get_latest_package_tag(package)
+            .get_latest_tag(Some(package), false)
             .ok()
             .and_then(|tag| tag.oid);
 
@@ -191,8 +191,9 @@ impl Tag {
         repository: &Repository,
     ) -> Result<Tag, BumpError> {
         let changelog_start_oid = repository
-            .get_latest_tag_oid(TagLookUpOptions::default())
-            .ok();
+            .get_latest_tag(None, false)
+            .ok()
+            .and_then(|tag| tag.oid);
 
         let commits = repository.get_commit_range_for_monorepo_global(RevSpecPattern2 {
             from: changelog_start_oid,

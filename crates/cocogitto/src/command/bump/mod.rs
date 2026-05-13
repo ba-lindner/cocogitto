@@ -9,7 +9,7 @@ use crate::conventional::version::IncrementCommand;
 use crate::conventional::version::PreCommand;
 use crate::git::repository::Repository;
 use crate::git::rev::revspec::RevSpecPattern2;
-use crate::git::tag::{Tag, TagLookUpOptions};
+use crate::git::tag::Tag;
 use crate::hook::{Hook, HookVersion, Hooks};
 use crate::settings::{HookType, MonoRepoPackage, Settings};
 use crate::BumpError;
@@ -83,14 +83,13 @@ impl<'a> BumpOptions<'a> {
         allow_empty: bool,
         increment: Option<IncrementCommand>,
     ) -> Result<BumpResult> {
-        let tag_opts = package.map(TagLookUpOptions::package).unwrap_or_default();
-        let current = match repository.get_latest_tag(tag_opts) {
+        let current = match repository.get_latest_tag(package, false) {
             Ok(tag) => tag,
             Err(TagError::NoTag) => Tag::default(),
             Err(other) => bail!(other),
         };
         let current_prerelease = repository
-            .get_latest_tag(tag_opts.include_pre_release())
+            .get_latest_tag(package, true)
             .ok()
             .filter(|tag| *tag > current);
 

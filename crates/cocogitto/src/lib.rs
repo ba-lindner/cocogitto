@@ -19,7 +19,7 @@ use git::repository::Repository;
 
 use settings::Settings;
 
-use crate::git::error::{Git2Error, TagError};
+use crate::git::error::Git2Error;
 
 use crate::git::tag::Tag;
 

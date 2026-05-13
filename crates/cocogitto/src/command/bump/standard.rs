@@ -2,7 +2,7 @@ use crate::command::bump::{BumpOptions, HookRunOptions};
 
 use crate::conventional::changelog::ReleaseType;
 
-use crate::git::tag::{Tag, TagLookUpOptions};
+use crate::git::tag::Tag;
 use crate::hook::HookVersion;
 use crate::{settings, CocoGitto, SETTINGS};
 use anyhow::Result;
@@ -41,7 +41,7 @@ impl CocoGitto {
 
         let current = self
             .repository
-            .get_latest_tag(TagLookUpOptions::default())
+            .get_latest_tag(None, true)
             .map(HookVersion::new)
             .ok();
 

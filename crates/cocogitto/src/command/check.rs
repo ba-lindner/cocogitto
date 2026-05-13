@@ -2,7 +2,6 @@ use crate::conventional::commit::Commit;
 use crate::error::CogCheckReport;
 
 use crate::git::rev::revspec::RevSpecPattern2;
-use crate::git::tag::TagLookUpOptions;
 use crate::CocoGitto;
 use anyhow::anyhow;
 use anyhow::Result;
@@ -20,9 +19,7 @@ impl CocoGitto {
         let pattern = if let Some(range) = range {
             self.repository.revspec_from_str(&range)?
         } else if check_from_latest_tag {
-            let tag = self
-                .repository
-                .get_latest_tag(TagLookUpOptions::default())?;
+            let tag = self.repository.get_latest_tag(None, false)?;
             RevSpecPattern2::from(tag.oid.expect("latest tag should have oid"))
         } else {
             RevSpecPattern2::full()
