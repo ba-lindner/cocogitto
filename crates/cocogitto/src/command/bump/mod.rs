@@ -324,7 +324,7 @@ impl CocoGitto {
             .repository
             .get_commit_range_for_package(pattern, package)?;
 
-        let mut release = Release::build_package(commit_range, package)?;
+        let mut release = Release::try_from(commit_range)?;
         release.version = tag.into();
         Ok(release)
     }

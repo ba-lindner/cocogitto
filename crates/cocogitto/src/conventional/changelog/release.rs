@@ -20,98 +20,67 @@ pub struct Release {
     pub previous: Option<Box<Release>>,
 }
 
-fn build_release_impl(
-    commits: CommitIter<'_>,
-    package: Option<&str>,
-) -> Result<Release, ChangelogError> {
-    let mut releases = vec![];
-    let mut commit_iter = commits.into_iter().rev().peekable();
-
-    while let Some((_oid, _commit)) = commit_iter.peek() {
-        let mut release_commits = vec![];
-
-        for (oid, commit) in commit_iter.by_ref() {
-            let version = oid.into_version(package);
-            if version.tag.is_some() {
-                release_commits.push((version, commit));
-                break;
-            }
-            release_commits.push((version, commit));
-        }
-
-        release_commits.reverse();
-        releases.push(release_commits);
-    }
-
-    let mut current = None;
-
-    for release in releases {
-        let next = Release {
-            version: release.first().unwrap().0.clone(),
-            from: current
-                .as_ref()
-                .map(|current: &Release| current.version.clone())
-                .unwrap_or(release.last().unwrap().0.clone()),
-            date: chrono::DateTime::from_timestamp(release.first().unwrap().1.time().seconds(), 0)
-                .map(|dt| dt.naive_utc())
-                .unwrap_or_else(|| Utc::now().naive_utc()),
-            commits: release
-                .iter()
-                .filter(|(_commit, commit)| commit.message().is_some())
-                .filter(|(_commit, commit)| {
-                    if SETTINGS.ignore_merge_commits {
-                        !commit.message().unwrap().starts_with("Merge")
-                    } else {
-                        true
-                    }
-                })
-                .filter(|(_commit, commit)| {
-                    if SETTINGS.ignore_fixup_commits {
-                        !commit.message().unwrap().starts_with("fixup!")
-                            && !commit.message().unwrap().starts_with("squash!")
-                            && !commit.message().unwrap().starts_with("amend!")
-                    } else {
-                        true
-                    }
-                })
-                .filter_map(|(_, commit)| match Commit::from_git_commit(commit) {
-                    Ok(commit) => {
-                        if !commit.should_omit() {
-                            Some(ChangelogCommit::from(commit))
-                        } else {
-                            None
-                        }
-                    }
-                    Err(err) => {
-                        let err = err.to_string().red();
-                        warn!("{}", err);
-                        None
-                    }
-                })
-                .collect(),
-            previous: current.map(Box::new),
-        };
-
-        current = Some(next);
-    }
-
-    current.ok_or(ChangelogError::EmptyRelease)
-}
-
-impl Release {
-    pub fn build_package(
-        commits: CommitIter<'_>,
-        package: &str,
-    ) -> Result<Release, ChangelogError> {
-        build_release_impl(commits, Some(package))
-    }
-}
-
 impl TryFrom<CommitIter<'_>> for Release {
     type Error = ChangelogError;
 
     fn try_from(commits: CommitIter<'_>) -> Result<Self, Self::Error> {
-        build_release_impl(commits, None)
+        let releases = commits.split_at_tags();
+
+        let mut current = None;
+
+        for release in releases {
+            let (from, version) = release.version_range();
+            let date = chrono::DateTime::from_timestamp(
+                release.iter_commits().next().unwrap().time().seconds(),
+                0,
+            )
+            .unwrap_or_else(Utc::now)
+            .naive_utc();
+            let next = Release {
+                version,
+                from,
+                date,
+                commits: release
+                    .into_iter()
+                    .filter(|(_commit, commit)| commit.message().is_some())
+                    .filter(|(_commit, commit)| {
+                        if SETTINGS.ignore_merge_commits {
+                            !commit.message().unwrap().starts_with("Merge")
+                        } else {
+                            true
+                        }
+                    })
+                    .filter(|(_commit, commit)| {
+                        if SETTINGS.ignore_fixup_commits {
+                            !commit.message().unwrap().starts_with("fixup!")
+                                && !commit.message().unwrap().starts_with("squash!")
+                                && !commit.message().unwrap().starts_with("amend!")
+                        } else {
+                            true
+                        }
+                    })
+                    .filter_map(|(_, commit)| match Commit::from_git_commit(&commit) {
+                        Ok(commit) => {
+                            if !commit.should_omit() {
+                                Some(ChangelogCommit::from(commit))
+                            } else {
+                                None
+                            }
+                        }
+                        Err(err) => {
+                            let err = err.to_string().red();
+                            warn!("{}", err);
+                            None
+                        }
+                    })
+                    .collect(),
+                previous: current.map(Box::new),
+            };
+
+            current = Some(next);
+        }
+
+        current.ok_or(ChangelogError::EmptyRelease)
     }
 }
 

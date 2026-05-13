@@ -46,15 +46,13 @@ impl CocoGitto {
                 continue;
             }
 
-            let from = Some(range.from_oid().into_version(Some(package_name)));
-
-            let version = range.to_oid().into_version(Some(package_name));
+            let (from, version) = range.version_range();
 
             let context = PackageBumpContext {
                 package_name,
                 package_path,
                 version,
-                from,
+                from: Some(from),
             };
 
             packages.push(context);

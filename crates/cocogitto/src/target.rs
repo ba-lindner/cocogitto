@@ -42,6 +42,14 @@ impl Target {
             .expect("invalid package");
         Self::Package { name, package }
     }
+
+    pub fn as_package(&self) -> Option<&'static str> {
+        if let Target::Package { name, .. } = self {
+            Some(*name)
+        } else {
+            None
+        }
+    }
 }
 
 #[cfg(test)]

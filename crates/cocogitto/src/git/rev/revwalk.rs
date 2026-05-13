@@ -5,6 +5,7 @@ use crate::git::oid::CommitInfo;
 use crate::git::repository::Repository;
 use crate::git::rev::revspec::RevSpecPattern2;
 use crate::git::rev::CommitIter;
+use crate::target::Target;
 
 impl Repository {
     /// Return a commit range for the given package from a [`RevspecPattern2`]
@@ -13,34 +14,15 @@ impl Repository {
         pattern: RevSpecPattern2,
         package: &str,
     ) -> Result<CommitIter<'_>, Git2Error> {
-        let mut commit_range = self.revwalk(pattern)?;
-        let mut commits = vec![];
-
-        for (oid_of, commit) in commit_range.into_iter() {
-            if self.is_commit_in_package(&commit, package)? {
-                commits.push((oid_of, commit));
-            }
-        }
-
-        commit_range = CommitIter(commits);
-        Ok(commit_range)
+        self.revwalk(pattern)?.for_target(Target::package(package))
     }
 
     pub fn get_commit_range_for_monorepo_global(
         &self,
         pattern: RevSpecPattern2,
     ) -> Result<CommitIter<'_>, Git2Error> {
-        let mut commit_range = self.revwalk(pattern)?;
-        let mut commits = vec![];
-
-        for (oid_of, commit) in commit_range.into_iter() {
-            if self.is_commit_global(&commit)? {
-                commits.push((oid_of, commit));
-            }
-        }
-
-        commit_range = CommitIter(commits);
-        Ok(commit_range)
+        self.revwalk(pattern)?
+            .for_target(Target::Monorepo { manual: false })
     }
 
     /// Return a commit range from a [`RevspecPattern2`]
@@ -65,7 +47,12 @@ impl Repository {
             commits.push((info, commit));
         }
 
-        Ok(CommitIter(commits))
+        Ok(CommitIter {
+            commits,
+            spec,
+            repository: self,
+            target: Target::Standard,
+        })
     }
 }
 
@@ -108,7 +95,7 @@ mod test {
         let range = repo.revwalk_pattern("..")?;
 
         // Assert
-        assert_that!(range.0).is_not_empty();
+        assert_that!(range.commits).is_not_empty();
         Ok(())
     }
 
@@ -229,7 +216,7 @@ mod test {
         // Assert
         assert_that!(commit_range.from_oid()).is_equal_to(CommitInfo::new(Oid::from_str(&first)?));
         assert_that!(commit_range.to_oid().to_string()).is_equal_to("1.0.0".to_string());
-        assert_that!(commit_range.0).has_length(2);
+        assert_that!(commit_range.commits).has_length(2);
         Ok(())
     }
 
@@ -275,8 +262,8 @@ mod test {
         let commit_range_global =
             repo.get_commit_range_for_monorepo_global(RevSpecPattern2::full());
         let commit_range_global = commit_range_global?;
-        assert_that!(commit_range_package.0).has_length(1);
-        assert_that!(commit_range_global.0).has_length(2);
+        assert_that!(commit_range_package.commits).has_length(1);
+        assert_that!(commit_range_global.commits).has_length(2);
         Ok(())
     }
 
@@ -294,7 +281,7 @@ mod test {
             repo.get_commit_range_for_package(repo.revspec_from_str("HEAD~1..HEAD")?, "one")?;
 
         asserting!("package with changes have some commits")
-            .that(&commit_range_package.0)
+            .that(&commit_range_package.commits)
             .mapped_contains(
                 |(_, commit)| commit.message(),
                 &Some("feat: commit to non-ignored path\n"),
@@ -316,8 +303,8 @@ mod test {
         let commit_range_package =
             repo.get_commit_range_for_package(repo.revspec_from_str("HEAD~1..HEAD")?, "one")?;
 
-        asserting!("package with no changes should have some commits for HEAD~1 revspec")
-            .that(&commit_range_package.0)
+        asserting!("package with no changes should have no commits for HEAD~1 revspec")
+            .that(&commit_range_package.commits)
             .has_length(0);
 
         Ok(())
@@ -337,13 +324,13 @@ mod test {
             repo.get_commit_range_for_package(repo.revspec_from_str("HEAD~1..HEAD")?, "one")?;
 
         asserting!("package with shared changes should have some commits for HEAD~1 revspec")
-            .that(&commit_range_package.0)
+            .that(&commit_range_package.commits)
             .mapped_contains(
                 |(_, commit)| commit.message(),
                 &Some("feat: commit to extra included path\n"),
             );
 
-        assert_that!(commit_range_package.0).has_length(1);
+        assert_that!(commit_range_package.commits).has_length(1);
 
         Ok(())
     }
@@ -364,13 +351,13 @@ mod test {
         asserting!(
             "package with extra included changes should have some commits for HEAD~1 revspec"
         )
-        .that(&commit_range_package.0)
+        .that(&commit_range_package.commits)
         .mapped_contains(
             |(_, commit)| commit.message(),
             &Some("feat: commit to extra included file\n"),
         );
 
-        assert_that!(commit_range_package.0).has_length(1);
+        assert_that!(commit_range_package.commits).has_length(1);
 
         Ok(())
     }
@@ -381,7 +368,7 @@ mod test {
         let commit_range_package =
             repo.get_commit_range_for_package(RevSpecPattern2::full(), "one")?;
         asserting!("package with with only ignored path commit should have no commits for full range revspec")
-            .that(&commit_range_package.0).has_length(0);
+            .that(&commit_range_package.commits).has_length(0);
 
         Ok(())
     }
@@ -435,7 +422,7 @@ mod test {
         // Assert
         assert_that!(commit_range.from_oid().to_string()).is_equal_to(first);
         assert_that!(commit_range.to_oid().to_string()).is_equal_to("1.0.0".to_string());
-        assert_that!(commit_range.0).has_length(2);
+        assert_that!(commit_range.commits).has_length(2);
         Ok(())
     }
 
@@ -444,7 +431,7 @@ mod test {
         // Arrange
         let repo = Repository::open(COCOGITTO_REPOSITORY)?;
         let v1_0_0 = Oid::from_str("549070fa99986b059cbaa9457b6b6f065bbec46b")?;
-        let _v1_0_0 = CommitInfo::from(Tag::from_str("1.0.0", Some(v1_0_0))?);
+        let v1_0_0 = CommitInfo::from(Tag::from_str("1.0.0", Some(v1_0_0))?);
         let v3_0_0 = Oid::from_str("c6508e243e2816e2d2f58828ee0c6721502958dd")?;
         let v3_0_0 = CommitInfo::from(Tag::from_str("3.0.0", Some(v3_0_0))?);
 
@@ -452,8 +439,7 @@ mod test {
         let range = repo.revwalk_pattern("1.0.0..3.0.0")?;
 
         // Assert
-        assert_that!(range.from_oid().to_string())
-            .is_equal_to("7c4a1cb692b445f36a44857ce17db32b91acd24c".to_string());
+        assert_that!(range.from_oid()).is_equal_to(v1_0_0);
         assert_that!(range.to_oid()).is_equal_to(v3_0_0);
 
         Ok(())
@@ -475,14 +461,13 @@ mod test {
         };
 
         let v1_0_0 = Oid::from_str("549070fa99986b059cbaa9457b6b6f065bbec46b")?;
-        let _v1_0_0 = CommitInfo::from(Tag::from_str("1.0.0", Some(v1_0_0))?);
+        let v1_0_0 = CommitInfo::from(Tag::from_str("1.0.0", Some(v1_0_0))?);
 
         // Act
         let range = repo.revwalk_pattern("1.0.0..")?;
 
         // Assert
-        assert_that!(range.from_oid().oid)
-            .is_equal_to(&Oid::from_str("7c4a1cb692b445f36a44857ce17db32b91acd24c")?);
+        assert_that!(range.from_oid()).is_equal_to(v1_0_0);
         assert_that!(range.to_oid()).is_equal_to(head);
 
         Ok(())
@@ -493,7 +478,7 @@ mod test {
         // Arrange
         let repo = Repository::open(COCOGITTO_REPOSITORY)?;
         let v2_1_1 = Oid::from_str("9dcf728d2eef6b5986633dd52ecbe9e416234898")?;
-        let _v2_1_1 = CommitInfo::from(Tag::from_str("2.1.1", Some(v2_1_1))?);
+        let v2_1_1 = CommitInfo::from(Tag::from_str("2.1.1", Some(v2_1_1))?);
         let v3_0_0 = Oid::from_str("c6508e243e2816e2d2f58828ee0c6721502958dd")?;
         let v3_0_0 = CommitInfo::from(Tag::from_str("3.0.0", Some(v3_0_0))?);
 
@@ -501,8 +486,7 @@ mod test {
         let range = repo.revwalk_pattern("2.1.1..3.0.0")?;
 
         // Assert
-        assert_that!(range.from_oid().oid)
-            .is_equal_to(&Oid::from_str("434c22295390fda0f276e3a3ee32fa4658489c5d")?);
+        assert_that!(range.from_oid()).is_equal_to(v2_1_1);
         assert_that!(range.to_oid()).is_equal_to(v3_0_0);
 
         Ok(())
@@ -526,7 +510,9 @@ mod test {
             tag_count -= 1;
         };
 
-        let range = repo.revwalk_pattern("..")?;
+        let range = repo
+            .revwalk_pattern("..")?
+            .for_target(Target::Monorepo { manual: false })?;
 
         // Act
         let mut release = Release::try_from(range)?;
