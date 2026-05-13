@@ -4,6 +4,7 @@ use crate::conventional::changelog::ReleaseType;
 
 use crate::git::tag::Tag;
 use crate::hook::HookVersion;
+use crate::target::Target;
 use crate::{settings, CocoGitto, SETTINGS};
 use anyhow::Result;
 use colored::*;
@@ -30,7 +31,8 @@ impl CocoGitto {
         let pattern = self.get_bump_revspec(&bump_res.current);
 
         if !SETTINGS.disable_changelog {
-            let changelog = self.get_changelog_with_target_version(pattern, tag.clone())?;
+            let changelog =
+                self.get_changelog_with_target_version(pattern, Target::Standard, tag.clone())?;
             changelog.pretty_print_bump_summary()?;
 
             let path = settings::changelog_path();

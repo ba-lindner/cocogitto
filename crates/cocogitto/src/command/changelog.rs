@@ -4,6 +4,7 @@ use crate::conventional::changelog::release::Release;
 use crate::conventional::changelog::template::Template;
 
 use crate::conventional::changelog::ReleaseType;
+use crate::target::Target;
 use crate::CocoGitto;
 use crate::SETTINGS;
 use anyhow::anyhow;
@@ -41,7 +42,8 @@ impl CocoGitto {
         for (package_name, package_path) in package_data.iter() {
             let range = self
                 .repository
-                .get_commit_range_for_package(pattern, package_name)?;
+                .revwalk(pattern)?
+                .for_target(Target::package(package_name))?;
             if range.is_empty() {
                 continue;
             }
@@ -62,12 +64,8 @@ impl CocoGitto {
             packages,
         };
 
-        let commit_range = if unified {
-            self.repository.revwalk(pattern)?
-        } else {
-            self.repository
-                .get_commit_range_for_monorepo_global(pattern)?
-        };
+        let target = Target::from_options(None, false, unified);
+        let commit_range = self.repository.revwalk(pattern)?.for_target(target)?;
 
         let changelog = Release::try_from(commit_range)?;
 

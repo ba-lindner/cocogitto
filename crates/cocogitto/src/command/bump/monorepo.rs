@@ -10,6 +10,7 @@ use crate::git::error::TagError;
 use crate::git::tag::Tag;
 use crate::hook::HookVersion;
 use crate::settings::MonoRepoPackage;
+use crate::target::Target;
 use crate::{settings, CocoGitto, SETTINGS};
 use anyhow::{bail, Result};
 
@@ -185,9 +186,9 @@ impl CocoGitto {
 
         if !SETTINGS.disable_changelog {
             let pattern = self.get_bump_revspec(&bump_res.current);
-            let changelog = self.get_monorepo_global_changelog_for_version(
+            let changelog = self.get_changelog_with_target_version(
                 pattern,
-                bump_res.current.clone().into(),
+                Target::Monorepo { manual: false },
                 tag.clone(),
             )?;
 
@@ -318,9 +319,9 @@ impl CocoGitto {
 
         if !SETTINGS.disable_changelog {
             let pattern = self.get_bump_revspec(&bump_res.current);
-            let changelog = self.get_monorepo_global_changelog_for_version(
+            let changelog = self.get_changelog_with_target_version(
                 pattern,
-                bump_res.current.clone().into(),
+                Target::Monorepo { manual: true },
                 tag.clone(),
             )?;
 
@@ -540,10 +541,10 @@ impl CocoGitto {
 
             if !SETTINGS.disable_changelog {
                 let pattern = self.get_bump_revspec(&bump.current);
-                let changelog = self.get_package_changelog_with_target_version(
+                let changelog = self.get_changelog_with_target_version(
                     pattern,
+                    Target::package(package_name),
                     tag.clone(),
-                    package_name.as_str(),
                 )?;
 
                 changelog.pretty_print_bump_summary()?;

@@ -3,32 +3,10 @@ use semver::{BuildMetadata, Prerelease, Version};
 use crate::conventional::error::BumpError;
 use crate::conventional::version::Increment;
 use crate::git::rev::revspec::RevSpecPattern2;
+use crate::target::Target;
 use crate::{Commit, IncrementCommand, Repository, Tag};
 
-pub(crate) trait Bump {
-    fn manual_bump(&self, version: &str) -> Result<Self, semver::Error>
-    where
-        Self: Sized;
-    fn major_bump(&self) -> Self;
-    fn minor_bump(&self) -> Self;
-    fn patch_bump(&self) -> Self;
-    fn no_bump(&self) -> Self;
-    fn auto_bump(&self, repository: &Repository) -> Result<Self, BumpError>
-    where
-        Self: Sized;
-    fn auto_global_bump(
-        &self,
-        repository: &Repository,
-        package_increment: Option<Increment>,
-    ) -> Result<Self, BumpError>
-    where
-        Self: Sized;
-    fn auto_package_bump(&self, repository: &Repository, package: &str) -> Result<Self, BumpError>
-    where
-        Self: Sized;
-}
-
-impl Bump for Tag {
+impl Tag {
     fn manual_bump(&self, version: &str) -> Result<Self, semver::Error> {
         let mut next = self.clone();
         next.version = Version::parse(version)?;
@@ -61,19 +39,13 @@ impl Bump for Tag {
         next.reset_metadata()
     }
 
-    fn auto_bump(&self, repository: &Repository) -> Result<Self, BumpError> {
-        self.get_version_from_commit_history(repository)
-    }
-
     fn auto_global_bump(
         &self,
         repository: &Repository,
         package_increment: Option<Increment>,
-    ) -> Result<Self, BumpError>
-    where
-        Self: Sized,
-    {
-        let tag_from_history = self.get_monorepo_global_version_from_commit_history(repository);
+    ) -> Result<Self, BumpError> {
+        let tag_from_history =
+            self.get_version_from_commit_history(repository, Target::Monorepo { manual: false });
         match (package_increment, tag_from_history) {
             (Some(package_increment), Ok(tag_from_history)) => {
                 let tag_from_packages = self.bump(package_increment.into(), repository)?;
@@ -88,15 +60,6 @@ impl Bump for Tag {
         }
     }
 
-    fn auto_package_bump(&self, repository: &Repository, package: &str) -> Result<Self, BumpError>
-    where
-        Self: Sized,
-    {
-        self.get_package_version_from_commit_history(package, repository)
-    }
-}
-
-impl Tag {
     pub(crate) fn bump(
         &self,
         increment: IncrementCommand,
@@ -107,8 +70,12 @@ impl Tag {
             IncrementCommand::Minor => Ok(self.minor_bump()),
             IncrementCommand::Patch => Ok(self.patch_bump()),
             IncrementCommand::NoBump => Ok(self.no_bump()),
-            IncrementCommand::Auto => self.auto_bump(repository),
-            IncrementCommand::AutoPackage(package) => self.auto_package_bump(repository, &package),
+            IncrementCommand::Auto => {
+                self.get_version_from_commit_history(repository, Target::Standard)
+            }
+            IncrementCommand::AutoPackage(package) => {
+                self.get_version_from_commit_history(repository, Target::package(&package))
+            }
             IncrementCommand::AutoMonoRepoGlobal(package_increment) => {
                 self.auto_global_bump(repository, package_increment)
             }
@@ -123,84 +90,22 @@ impl Tag {
         self
     }
 
-    fn get_version_from_commit_history(&self, repository: &Repository) -> Result<Tag, BumpError> {
-        let changelog_start_oid = repository
-            .get_latest_tag(None, false)
-            .ok()
-            .and_then(|tag| tag.oid);
-
-        let commits = repository.revwalk(RevSpecPattern2 {
-            from: changelog_start_oid,
-            to: None,
-        })?;
-
-        let conventional_commits: Vec<Commit> = commits
-            .ignore_commits_by_settings()
-            .iter_commits()
-            .map(|commit| Commit::from_git_commit(commit))
-            .filter_map(Result::ok)
-            .collect();
-
-        let increment_type = self.version_increment_from_commit_history(&conventional_commits)?;
-
-        Ok(match increment_type {
-            Increment::Major => self.major_bump(),
-            Increment::Minor => self.minor_bump(),
-            Increment::Patch => self.patch_bump(),
-            Increment::NoBump => self.no_bump(),
-        })
-    }
-
-    fn get_package_version_from_commit_history(
+    fn get_version_from_commit_history(
         &self,
-        package: &str,
         repository: &Repository,
+        target: Target,
     ) -> Result<Tag, BumpError> {
         let changelog_start_oid = repository
-            .get_latest_tag(Some(package), false)
+            .get_latest_tag(self.package.as_deref(), false)
             .ok()
             .and_then(|tag| tag.oid);
 
-        let commits = repository.get_commit_range_for_package(
-            RevSpecPattern2 {
+        let conventional_commits: Vec<Commit> = repository
+            .revwalk(RevSpecPattern2 {
                 from: changelog_start_oid,
                 to: None,
-            },
-            package,
-        )?;
-
-        let conventional_commits: Vec<Commit> = commits
-            .ignore_commits_by_settings()
-            .iter_commits()
-            .map(|commit| Commit::from_git_commit(commit))
-            .filter_map(Result::ok)
-            .collect();
-
-        let increment_type = self.version_increment_from_commit_history(&conventional_commits)?;
-
-        Ok(match increment_type {
-            Increment::Major => self.major_bump(),
-            Increment::Minor => self.minor_bump(),
-            Increment::Patch => self.patch_bump(),
-            Increment::NoBump => self.no_bump(),
-        })
-    }
-
-    fn get_monorepo_global_version_from_commit_history(
-        &self,
-        repository: &Repository,
-    ) -> Result<Tag, BumpError> {
-        let changelog_start_oid = repository
-            .get_latest_tag(None, false)
-            .ok()
-            .and_then(|tag| tag.oid);
-
-        let commits = repository.get_commit_range_for_monorepo_global(RevSpecPattern2 {
-            from: changelog_start_oid,
-            to: None,
-        })?;
-
-        let conventional_commits: Vec<Commit> = commits
+            })?
+            .for_target(target)?
             .ignore_commits_by_settings()
             .iter_commits()
             .map(|commit| Commit::from_git_commit(commit))
@@ -221,27 +126,11 @@ impl Tag {
         &self,
         commits: &[Commit],
     ) -> Result<Increment, BumpError> {
-        let is_major_bump = || self.version.major != 0 && commits.iter().any(Commit::is_major_bump);
-
-        let is_minor_bump = || commits.iter().any(Commit::is_minor_bump);
-
-        let is_patch_bump = || commits.iter().any(Commit::is_patch_bump);
-
-        // At this point, it is not a major, minor or patch bump, but we might have found conventional commits
-        // -> Must be only chore, docs, refactor ... which means commits that don't require bump but shouldn't throw error
-        let no_bump_required = !commits.is_empty();
-
-        if is_major_bump() {
-            Ok(Increment::Major)
-        } else if is_minor_bump() {
-            Ok(Increment::Minor)
-        } else if is_patch_bump() {
-            Ok(Increment::Patch)
-        } else if no_bump_required {
-            Ok(Increment::NoBump)
-        } else {
-            Err(BumpError::NoCommitFound)
-        }
+        commits
+            .iter()
+            .map(|commit| commit.increment(self.version.major > 0))
+            .max()
+            .ok_or(BumpError::NoCommitFound)
     }
 }
 
@@ -260,13 +149,13 @@ mod test {
     use semver::Version;
     use speculoos::prelude::*;
 
-    use crate::conventional::bump::Bump;
     use crate::conventional::commit::{Commit, CommitConfig};
     use crate::conventional::error::BumpError;
     use crate::conventional::version::{Increment, IncrementCommand};
     use crate::git::repository::Repository;
     use crate::git::tag::Tag;
     use crate::settings::{MonoRepoPackage, MonorepoConfig, Settings};
+    use crate::target::Target;
     use crate::test_helpers::{git_init_no_gpg, git_tag};
 
     impl Commit {
@@ -606,7 +495,8 @@ mod test {
         let base_version = Tag::from_str("1.0.0", None)?;
 
         // Act
-        let tag = base_version.get_monorepo_global_version_from_commit_history(&repository);
+        let tag = base_version
+            .get_version_from_commit_history(&repository, Target::Monorepo { manual: false });
 
         // Assert
         assert_that!(tag)

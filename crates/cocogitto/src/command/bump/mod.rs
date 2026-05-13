@@ -2,7 +2,6 @@ use crate::command::bump::prerelease::increment_prerelease;
 use crate::conventional::changelog::release::Release;
 use crate::conventional::commit::Commit;
 use crate::git::error::TagError;
-use crate::git::oid::ReleaseVersion;
 
 use crate::conventional::error::BumpError as ConvBumpError;
 use crate::conventional::version::IncrementCommand;
@@ -12,6 +11,7 @@ use crate::git::rev::revspec::RevSpecPattern2;
 use crate::git::tag::Tag;
 use crate::hook::{Hook, HookVersion, Hooks};
 use crate::settings::{HookType, MonoRepoPackage, Settings};
+use crate::target::Target;
 use crate::BumpError;
 use crate::{CocoGitto, COMMITS_METADATA, SETTINGS};
 use anyhow::Result;
@@ -304,55 +304,26 @@ impl CocoGitto {
     pub fn get_changelog_with_target_version(
         &self,
         pattern: RevSpecPattern2,
+        target: Target,
         tag: Tag,
     ) -> Result<Release> {
-        let commit_range = self.repository.revwalk(pattern)?;
-        let mut release = Release::try_from(commit_range)?;
-        release.version = tag.into();
-        Ok(release)
-    }
-
-    /// The target package version is not created yet when generating the changelog.
-    pub fn get_package_changelog_with_target_version(
-        &self,
-        pattern: RevSpecPattern2,
-        tag: Tag,
-        package: &str,
-    ) -> Result<Release> {
-        let commit_range = self
-            .repository
-            .get_commit_range_for_package(pattern, package)?;
-
-        let mut release = Release::try_from(commit_range)?;
-        release.version = tag.into();
-        Ok(release)
-    }
-
-    /// The target global monorepo version is not created yet when generating the changelog.
-    pub fn get_monorepo_global_changelog_for_version(
-        &self,
-        pattern: RevSpecPattern2,
-        from: ReleaseVersion,
-        tag: Tag,
-    ) -> Result<Release> {
-        let commit_range = self
-            .repository
-            .get_commit_range_for_monorepo_global(pattern)?;
-
+        let allow_empty = matches!(target, Target::Monorepo { .. });
+        let commit_range = self.repository.revwalk(pattern)?.for_target(target)?;
+        let fallback_from = commit_range.version_range().0;
         let release = match Release::try_from(commit_range) {
             Ok(mut release) => {
                 release.version = tag.into();
                 release
             }
-            Err(_) => Release {
+            Err(_) if allow_empty => Release {
                 version: tag.into(),
-                from,
+                from: fallback_from,
                 date: Default::default(),
                 commits: vec![],
                 previous: None,
             },
+            Err(why) => bail!(why),
         };
-
         Ok(release)
     }
 
