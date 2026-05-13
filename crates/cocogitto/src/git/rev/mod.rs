@@ -5,6 +5,7 @@ use crate::git::oid::{CommitInfo, ReleaseVersion};
 use crate::git::repository::Repository;
 use crate::git::rev::revspec::RevSpecPattern2;
 use crate::target::Target;
+use crate::SETTINGS;
 
 pub mod cache;
 pub mod filters;
@@ -94,6 +95,27 @@ impl<'repo> CommitIter<'repo> {
         }
 
         releases
+    }
+
+    pub fn ignore_commits_by_settings(self) -> Self {
+        self.ignore_commits(SETTINGS.ignore_merge_commits, SETTINGS.ignore_fixup_commits)
+    }
+
+    pub fn ignore_commits(
+        mut self,
+        ignore_merge_commits: bool,
+        ignore_fixup_commits: bool,
+    ) -> Self {
+        self.commits.retain(|(_, commit)| {
+            !(ignore_merge_commits && commit.parent_count() > 1
+                || ignore_fixup_commits
+                    && commit.message().is_some_and(|msg| {
+                        msg.starts_with("fixup!")
+                            || msg.starts_with("squash!")
+                            || msg.starts_with("amend!")
+                    }))
+        });
+        self
     }
 }
 

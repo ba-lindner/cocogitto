@@ -5,7 +5,7 @@ use serde::Serialize;
 use crate::conventional::commit::Commit;
 use crate::git::oid::ReleaseVersion;
 use crate::git::rev::CommitIter;
-use crate::{settings, SETTINGS};
+use crate::settings;
 use colored::Colorize;
 
 use crate::conventional::changelog::error::ChangelogError;
@@ -41,24 +41,9 @@ impl TryFrom<CommitIter<'_>> for Release {
                 from,
                 date,
                 commits: release
+                    .ignore_commits_by_settings()
                     .into_iter()
                     .filter(|(_commit, commit)| commit.message().is_some())
-                    .filter(|(_commit, commit)| {
-                        if SETTINGS.ignore_merge_commits {
-                            !commit.message().unwrap().starts_with("Merge")
-                        } else {
-                            true
-                        }
-                    })
-                    .filter(|(_commit, commit)| {
-                        if SETTINGS.ignore_fixup_commits {
-                            !commit.message().unwrap().starts_with("fixup!")
-                                && !commit.message().unwrap().starts_with("squash!")
-                                && !commit.message().unwrap().starts_with("amend!")
-                        } else {
-                            true
-                        }
-                    })
                     .filter_map(|(_, commit)| match Commit::from_git_commit(&commit) {
                         Ok(commit) => {
                             if !commit.should_omit() {

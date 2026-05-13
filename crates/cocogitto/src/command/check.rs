@@ -27,28 +27,13 @@ impl CocoGitto {
         } else {
             RevSpecPattern2::full()
         };
-        let commit_range = self.repository.revwalk(pattern)?;
-
-        let ignore_merge_commit_fn = |commit: &git2::Commit| commit.parent_count() <= 1;
-        let ignore_fixup_commit_fn = |commit: &git2::Commit| {
-            !commit.message().unwrap().starts_with("fixup!")
-                && !commit.message().unwrap().starts_with("squash!")
-                && !commit.message().unwrap().starts_with("amend!")
-        };
+        let commit_range = self
+            .repository
+            .revwalk(pattern)?
+            .ignore_commits(ignore_merge_commits, ignore_fixup_commits);
 
         let errors: Vec<_> = commit_range
             .iter_commits()
-            .filter(|commit| {
-                if ignore_merge_commits && ignore_fixup_commits {
-                    ignore_merge_commit_fn(commit) && ignore_fixup_commit_fn(commit)
-                } else if ignore_fixup_commits {
-                    ignore_fixup_commit_fn(commit)
-                } else if ignore_merge_commits {
-                    ignore_merge_commit_fn(commit)
-                } else {
-                    true
-                }
-            })
             .map(Commit::from_git_commit)
             .filter_map(Result::err)
             .collect();
