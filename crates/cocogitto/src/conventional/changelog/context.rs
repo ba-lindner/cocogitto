@@ -20,7 +20,7 @@ pub struct MonoRepoContext<'a> {
 #[derive(Debug, Serialize)]
 pub struct PackageBumpContext<'a> {
     pub package_name: &'a str,
-    pub package_path: &'a str,
+    pub package_path: String,
     pub version: ReleaseVersion,
     pub from: Option<ReleaseVersion>,
 }

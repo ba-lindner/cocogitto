@@ -39,7 +39,7 @@ impl CocoGitto {
         package_data.sort_by_key(|&(name, _)| name);
 
         let pattern = self.repository.revspec_from_str(pattern)?;
-        for (package_name, package_path) in package_data.iter() {
+        for (package_name, package_path) in package_data {
             let range = self
                 .repository
                 .revwalk(pattern)?

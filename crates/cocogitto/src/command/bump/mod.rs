@@ -63,6 +63,7 @@ pub struct PackageBumpOptions<'a> {
     pub disable_bump_commit: bool,
 }
 
+#[derive(Debug)]
 struct BumpResult {
     current: Tag,
     next: Tag,
@@ -136,6 +137,8 @@ impl<'a> BumpOptions<'a> {
             );
         }
 
+        next.package = package.map(ToString::to_string);
+
         Ok(BumpResult {
             current,
             next,
@@ -162,72 +165,6 @@ impl<'a> PackageBumpOptions<'a> {
     }
 }
 
-struct HookRunOptions<'a> {
-    hook_type: HookType,
-    current_tag: Option<&'a HookVersion>,
-    next_version: Option<&'a HookVersion>,
-    hook_profile: Option<&'a str>,
-    package_name: Option<&'a str>,
-    package: Option<&'a MonoRepoPackage>,
-}
-
-impl<'a> HookRunOptions<'a> {
-    pub fn post_bump() -> Self {
-        Self {
-            hook_type: HookType::PostBump,
-            current_tag: None,
-            next_version: None,
-            hook_profile: None,
-            package_name: None,
-            package: None,
-        }
-    }
-
-    pub fn pre_bump() -> Self {
-        Self {
-            hook_type: HookType::PreBump,
-            current_tag: None,
-            next_version: None,
-            hook_profile: None,
-            package_name: None,
-            package: None,
-        }
-    }
-
-    pub fn current_tag<'b>(mut self, version: Option<&'b HookVersion>) -> Self
-    where
-        'b: 'a,
-    {
-        self.current_tag = version;
-        self
-    }
-
-    pub fn next_version<'b>(mut self, version: &'b HookVersion) -> Self
-    where
-        'b: 'a,
-    {
-        self.next_version = Some(version);
-        self
-    }
-
-    pub fn hook_profile<'b>(mut self, profile: Option<&'b str>) -> Self
-    where
-        'b: 'a,
-    {
-        self.hook_profile = profile;
-        self
-    }
-
-    pub fn package<'b>(mut self, name: &'b str, package: &'b MonoRepoPackage) -> Self
-    where
-        'b: 'a,
-    {
-        self.package_name = Some(name);
-        self.package = Some(package);
-        self
-    }
-}
-
 impl CocoGitto {
     fn get_bump_revspec(&mut self, current_tag: &Tag) -> RevSpecPattern2 {
         if current_tag.is_zero() {
@@ -235,27 +172,6 @@ impl CocoGitto {
         } else {
             // this function is always called with the latest tag, so it should always have a oid
             RevSpecPattern2::from(*current_tag.oid_unchecked())
-        }
-    }
-
-    pub fn unwrap_or_stash_and_exit<T>(&mut self, tag: &Tag, result: Result<T>) -> T {
-        match result {
-            Ok(res) => res,
-            Err(err) => {
-                self.repository
-                    .stash_failed_version(tag.clone())
-                    .expect("stash");
-                error!(
-                    "{}",
-                    BumpError {
-                        cause: err.to_string(),
-                        version: tag.to_string(),
-                        stash_number: 0,
-                    }
-                );
-
-                exit(1);
-            }
         }
     }
 
@@ -327,75 +243,96 @@ impl CocoGitto {
         Ok(release)
     }
 
-    fn run_hooks(&self, options: HookRunOptions) -> Result<()> {
-        let settings = Settings::get(&self.repository)?;
+    fn run_hooks(
+        &mut self,
+        bump: Option<&BumpResult>,
+        target: Target,
+        hook_type: HookType,
+        hook_profile: Option<&str>,
+    ) -> Result<()> {
+        let hook_result = self.run_hooks_impl(bump, target, hook_type, hook_profile);
 
-        let hooks: Vec<Hook> = match (options.package, options.hook_profile) {
-            (None, Some(profile)) => settings
-                .get_profile_hooks(profile, options.hook_type)
-                .iter()
-                .map(|s| s.parse())
-                .enumerate()
-                .map(|(idx, result)| {
-                    result.context(format!(
-                        "Cannot parse bump profile {profile} hook at index {idx}"
-                    ))
-                })
-                .try_collect()?,
+        if let HookType::PostBump = hook_type {
+            return hook_result;
+        }
+        self.repository.add_all()?;
+        if let Err(err) = hook_result {
+            let tag = bump.map(|bump| bump.next.clone()).unwrap_or_default();
+            error!(
+                "{}",
+                BumpError {
+                    cause: err.to_string(),
+                    version: tag.to_string(),
+                    stash_number: 0,
+                }
+            );
+            self.repository
+                .stash_failed_version(tag)
+                .expect("failed to stash bump hook changes");
 
-            (Some(package), Some(profile)) => {
-                let hooks = package.get_profile_hooks(profile, options.hook_type);
-
-                hooks
-                    .iter()
-                    .map(|s| s.parse())
-                    .enumerate()
-                    .map(|(idx, result)| {
-                        result.context(format!(
-                            "Cannot parse bump profile {profile} hook at index {idx}"
-                        ))
-                    })
-                    .try_collect()?
-            }
-            (Some(package), None) => package
-                .get_hooks(options.hook_type)
-                .iter()
-                .map(|s| s.parse())
-                .enumerate()
-                .map(|(idx, result)| result.context(format!("Cannot parse hook at index {idx}")))
-                .try_collect()?,
-            (None, None) => settings
-                .get_hooks(options.hook_type)
-                .iter()
-                .map(|s| s.parse())
-                .enumerate()
-                .map(|(idx, result)| result.context(format!("Cannot parse hook at index {idx}")))
-                .try_collect()?,
+            exit(1);
         };
 
+        Ok(())
+    }
+
+    fn run_hooks_impl(
+        &self,
+        bump: Option<&BumpResult>,
+        target: Target,
+        hook_type: HookType,
+        hook_profile: Option<&str>,
+    ) -> Result<()> {
+        let settings = Settings::get(&self.repository)?;
+
+        let package = if let Target::Package { name, package } = target {
+            Some((name, package))
+        } else {
+            None
+        };
+        let (hook_src, package_hint) = package
+            .map(|(name, package)| (package as &dyn Hooks, format!(" for package {name}")))
+            .unwrap_or((&settings, String::new()));
+
+        let (raw_hooks, profile_hint) = if let Some(profile) = hook_profile {
+            (
+                hook_src.get_profile_hooks(profile, hook_type),
+                format!(" bump profile {profile}"),
+            )
+        } else {
+            (hook_src.get_hooks(hook_type), String::new())
+        };
+
+        let hooks: Vec<Hook> = raw_hooks
+            .iter()
+            .enumerate()
+            .map(|(idx, s)| {
+                s.parse().with_context(|| {
+                    format!("Cannot parse{profile_hint} hook{package_hint} at index {idx}")
+                })
+            })
+            .try_collect()?;
+
         if !hooks.is_empty() {
-            let hook_type = match options.hook_type {
+            let hook_type = match hook_type {
                 HookType::PreBump => "pre-bump",
                 HookType::PostBump => "post-bump",
             };
 
-            match options.package_name {
-                None => {
-                    let msg = format!("[{hook_type}]").underline().white().bold();
-                    info!("{msg}")
-                }
-                Some(package_name) => {
-                    let msg = format!("[{hook_type}-{package_name}]")
-                        .underline()
-                        .white()
-                        .bold();
-                    info!("{msg}")
-                }
-            }
+            let msg = if let Some((name, _)) = package {
+                format!("[{hook_type}-{name}]")
+            } else {
+                format!("[{hook_type}]")
+            };
+            info!("{}", msg.underline().white().bold());
         }
 
+        let current_version = bump
+            .map(|bump| HookVersion::new(bump.current.clone()))
+            .filter(|vers| !vers.prefixed_tag.is_zero());
+        let next_version = bump.map(|bump| HookVersion::new(bump.next.clone()));
         for mut hook in hooks {
-            hook.insert_versions(options.current_tag, options.next_version)?;
+            hook.insert_versions(current_version.as_ref(), next_version.as_ref())?;
             let command = hook.to_string();
             let command = if command.chars().count() > 78 {
                 &command[0..command.len()]
@@ -403,7 +340,7 @@ impl CocoGitto {
                 &command
             };
             info!("[{command}]");
-            let package_path = options.package.map(|p| p.path.as_path());
+            let package_path = package.map(|p| p.1.path.as_path());
             hook.run(package_path).context(hook.to_string())?;
             println!();
         }

@@ -188,7 +188,7 @@ pub fn monorepo_context<'a>() -> MonoRepoContext<'a> {
         packages: vec![
             PackageBumpContext {
                 package_name: "one",
-                package_path: "crates/one",
+                package_path: "crates/one".to_string(),
                 version: Tag::from_str(
                     "0.1.0",
                     Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
@@ -206,7 +206,7 @@ pub fn monorepo_context<'a>() -> MonoRepoContext<'a> {
             },
             PackageBumpContext {
                 package_name: "two",
-                package_path: "crates/two",
+                package_path: "crates/two".to_string(),
                 version: Tag::from_str(
                     "0.2.0",
                     Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
@@ -233,7 +233,7 @@ pub fn default_package_context<'a>() -> MonoRepoContext<'a> {
         packages: vec![
             PackageBumpContext {
                 package_name: "one",
-                package_path: "crates/one",
+                package_path: "crates/one".to_string(),
                 version: Tag::from_str(
                     "0.1.0",
                     Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),
@@ -244,7 +244,7 @@ pub fn default_package_context<'a>() -> MonoRepoContext<'a> {
             },
             PackageBumpContext {
                 package_name: "two",
-                package_path: "crates/two",
+                package_path: "crates/two".to_string(),
                 version: Tag::from_str(
                     "0.2.0",
                     Some(Oid::from_str("fae3a288a1bc69b14f85a1d5fe57cee1964acd60").unwrap()),

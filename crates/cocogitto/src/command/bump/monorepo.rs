@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::command::bump::{BumpOptions, HookRunOptions};
+use crate::command::bump::{BumpOptions, BumpResult};
 use crate::conventional::changelog::context::{
     MonoRepoContext, PackageBumpContext, PackageContext,
 };
@@ -8,8 +8,7 @@ use crate::conventional::changelog::ReleaseType;
 use crate::conventional::version::{Increment, IncrementCommand};
 use crate::git::error::TagError;
 use crate::git::tag::Tag;
-use crate::hook::HookVersion;
-use crate::settings::MonoRepoPackage;
+use crate::settings::{HookType, MonoRepoPackage};
 use crate::target::Target;
 use crate::{settings, CocoGitto, SETTINGS};
 use anyhow::{bail, Result};
@@ -21,13 +20,9 @@ use crate::git::oid::ReleaseVersion;
 
 #[derive(Debug)]
 struct PackageBumpData {
-    package_name: String,
-    package_path: String,
-    public_api: bool,
-    current: Tag,
-    old_version: Option<HookVersion>,
-    new_version: HookVersion,
-    increment: Increment,
+    name: &'static str,
+    package: &'static MonoRepoPackage,
+    res: BumpResult,
 }
 
 #[derive(Debug)]
@@ -57,6 +52,9 @@ impl CocoGitto {
 
     pub fn create_all_package_version_auto(&mut self, opts: BumpOptions) -> Result<()> {
         self.pre_bump_checks(opts.skip_untracked)?;
+
+        let target = Target::Monorepo { manual: false };
+
         // Get package bumps
         let bumps = self.get_packages_bumps(&opts)?;
 
@@ -67,18 +65,15 @@ impl CocoGitto {
 
         if opts.dry_run {
             for bump in bumps {
-                println!("{}", bump.new_version.prefixed_tag)
+                println!("{}", bump.res.next)
             }
             return Ok(());
         }
 
-        let hook_result =
-            self.run_hooks(HookRunOptions::pre_bump().hook_profile(opts.hooks_config));
+        self.run_hooks(None, target, HookType::PreBump, opts.hooks_config)?;
 
         let disable_bump_commit = opts.disable_bump_commit || SETTINGS.disable_bump_commit;
 
-        self.repository.add_all()?;
-        self.unwrap_or_stash_and_exit(&Tag::default(), hook_result);
         self.bump_packages(opts.hooks_config, &bumps)?;
 
         if !disable_bump_commit {
@@ -99,35 +94,34 @@ impl CocoGitto {
         if SETTINGS.generate_mono_repository_package_tags {
             for bump in &bumps {
                 self.repository
-                    .create_tag(&bump.new_version.prefixed_tag, disable_bump_commit)?;
+                    .create_tag(&bump.res.next, disable_bump_commit)?;
             }
         }
 
         // Run per package post hooks
         for bump in bumps {
-            let package = SETTINGS
-                .monorepo
-                .as_ref()
-                .and_then(|m| m.packages.get(&bump.package_name))
-                .expect("package exists");
-
             self.run_hooks(
-                HookRunOptions::post_bump()
-                    .current_tag(bump.old_version.as_ref())
-                    .next_version(&bump.new_version)
-                    .hook_profile(opts.hooks_config)
-                    .package(&bump.package_name, package),
+                Some(&bump.res),
+                Target::Package {
+                    name: bump.name,
+                    package: bump.package,
+                },
+                HookType::PostBump,
+                opts.hooks_config,
             )?;
         }
 
         // Run global post hooks
-        self.run_hooks(HookRunOptions::post_bump().hook_profile(opts.hooks_config))?;
+        self.run_hooks(None, target, HookType::PostBump, opts.hooks_config)?;
 
         Ok(())
     }
 
     fn create_monorepo_version_auto(&mut self, opts: BumpOptions) -> Result<()> {
         self.pre_bump_checks(opts.skip_untracked)?;
+
+        let target = Target::Monorepo { manual: false };
+
         // Get package bumps
         let bumps = self.get_packages_bumps(&opts)?;
         if bumps.is_empty() {
@@ -143,8 +137,13 @@ impl CocoGitto {
             IncrementCommand::AutoMonoRepoGlobal(
                 bumps
                     .iter()
-                    .filter(|bump| bump.public_api)
-                    .map(|bump| bump.increment)
+                    .filter(|bump| bump.package.public_api)
+                    .map(|bump| {
+                        bump.res
+                            .next
+                            .get_increment_from(&bump.res.current)
+                            .unwrap_or(Increment::NoBump)
+                    })
                     .max(),
             )
         } else {
@@ -153,44 +152,37 @@ impl CocoGitto {
 
         let bump_res = opts.get_new_version(&self.repository, None, false, Some(increment))?;
 
-        let tag = Tag::create(bump_res.next.version, None);
-
         if opts.dry_run {
             for bump in bumps {
-                println!("{}", bump.new_version.prefixed_tag)
+                println!("{}", bump.res.next)
             }
-            print!("{tag}");
+            print!("{}", bump_res.next);
             return Ok(());
         }
 
         let mut template_context = vec![];
         for bump in &bumps {
+            let from = if bump.res.current.is_zero() {
+                let first = self
+                    .repository
+                    .get_first_commit()
+                    .expect("non empty repository");
+                ReleaseVersion::new(first)
+            } else {
+                bump.res.current.clone().into()
+            };
             template_context.push(PackageBumpContext {
-                package_name: &bump.package_name,
-                package_path: &bump.package_path,
-                version: bump.new_version.prefixed_tag.clone().into(),
-                from: Some(
-                    bump.old_version
-                        .as_ref()
-                        .map(|v| v.prefixed_tag.clone().into())
-                        .unwrap_or_else(|| {
-                            let first = self
-                                .repository
-                                .get_first_commit()
-                                .expect("non empty repository");
-                            ReleaseVersion::new(first)
-                        }),
-                ),
+                package_name: bump.name,
+                package_path: bump.package.path.to_string_lossy().to_string(),
+                version: bump.res.next.clone().into(),
+                from: Some(from),
             })
         }
 
         if !SETTINGS.disable_changelog {
             let pattern = self.get_bump_revspec(&bump_res.current);
-            let changelog = self.get_changelog_with_target_version(
-                pattern,
-                Target::Monorepo { manual: false },
-                tag.clone(),
-            )?;
+            let changelog =
+                self.get_changelog_with_target_version(pattern, target, bump_res.next.clone())?;
 
             changelog.pretty_print_bump_summary()?;
 
@@ -207,22 +199,12 @@ impl CocoGitto {
             )?;
         }
 
-        let current = self
-            .repository
-            .get_latest_tag(None, false)
-            .map(HookVersion::new)
-            .ok();
-        let next_version = HookVersion::new(tag.clone());
-
-        let hook_result = self.run_hooks(
-            HookRunOptions::pre_bump()
-                .current_tag(current.as_ref())
-                .next_version(&next_version)
-                .hook_profile(opts.hooks_config),
-        );
-
-        self.repository.add_all()?;
-        self.unwrap_or_stash_and_exit(&tag, hook_result);
+        self.run_hooks(
+            Some(&bump_res),
+            target,
+            HookType::PreBump,
+            opts.hooks_config,
+        )?;
         self.bump_packages(opts.hooks_config, &bumps)?;
 
         let disable_bump_commit = opts.disable_bump_commit || SETTINGS.disable_bump_commit;
@@ -232,16 +214,13 @@ impl CocoGitto {
             if opts.skip_ci || opts.skip_ci_override.is_some() {
                 let skip_ci_pattern = opts.skip_ci_override.unwrap_or(SETTINGS.skip_ci.clone());
                 self.repository.commit(
-                    &format!(
-                        "chore(version): {} {}",
-                        next_version.prefixed_tag, skip_ci_pattern
-                    ),
+                    &format!("chore(version): {} {}", bump_res.next, skip_ci_pattern),
                     sign,
                     true,
                 )?;
             } else {
                 self.repository.commit(
-                    &format!("chore(version): {}", next_version.prefixed_tag),
+                    &format!("chore(version): {}", bump_res.next),
                     sign,
                     true,
                 )?;
@@ -251,43 +230,41 @@ impl CocoGitto {
         if SETTINGS.generate_mono_repository_package_tags {
             for bump in &bumps {
                 self.repository
-                    .create_tag(&bump.new_version.prefixed_tag, disable_bump_commit)?;
+                    .create_tag(&bump.res.next, disable_bump_commit)?;
             }
         }
 
         if let Some(msg_tmpl) = opts.annotated {
             let mut context = tera::Context::new();
             context.insert("latest", &bump_res.current.version.to_string());
-            context.insert("version", &tag.version.to_string());
+            context.insert("version", &bump_res.next.version.to_string());
             let msg = Tera::one_off(&msg_tmpl, &context, false)?;
             self.repository
-                .create_annotated_tag(&tag, &msg, disable_bump_commit)?;
+                .create_annotated_tag(&bump_res.next, &msg, disable_bump_commit)?;
         } else {
-            self.repository.create_tag(&tag, disable_bump_commit)?;
+            self.repository
+                .create_tag(&bump_res.next, disable_bump_commit)?;
         }
 
         // Run per package post hooks
         for bump in bumps {
-            let package = SETTINGS
-                .monorepo
-                .as_ref()
-                .and_then(|m| m.packages.get(&bump.package_name))
-                .expect("package exists");
             self.run_hooks(
-                HookRunOptions::post_bump()
-                    .current_tag(bump.old_version.as_ref())
-                    .next_version(&bump.new_version)
-                    .hook_profile(opts.hooks_config)
-                    .package(&bump.package_name, package),
+                Some(&bump.res),
+                Target::Package {
+                    name: bump.name,
+                    package: bump.package,
+                },
+                HookType::PostBump,
+                opts.hooks_config,
             )?;
         }
 
         // Run global post hooks
         self.run_hooks(
-            HookRunOptions::post_bump()
-                .current_tag(current.as_ref())
-                .next_version(&next_version)
-                .hook_profile(opts.hooks_config),
+            Some(&bump_res),
+            target,
+            HookType::PostBump,
+            opts.hooks_config,
         )?;
 
         Ok(())
@@ -295,15 +272,16 @@ impl CocoGitto {
 
     fn create_monorepo_version_manual(&mut self, opts: BumpOptions) -> Result<()> {
         self.pre_bump_checks(opts.skip_untracked)?;
+
+        let target = Target::Monorepo { manual: true };
+
         // Get package bumps
         let bumps = self.get_current_packages()?;
 
         let bump_res = opts.get_new_version(&self.repository, None, false, None)?;
 
-        let tag = Tag::create(bump_res.next.version, None);
-
         if opts.dry_run {
-            print!("{tag}");
+            print!("{}", bump_res.next);
             return Ok(());
         }
 
@@ -311,7 +289,7 @@ impl CocoGitto {
         for bump in &bumps {
             template_context.push(PackageBumpContext {
                 package_name: &bump.package_name,
-                package_path: &bump.package_path,
+                package_path: bump.package_path.clone(),
                 version: bump.version.clone().into(),
                 from: None,
             })
@@ -319,11 +297,8 @@ impl CocoGitto {
 
         if !SETTINGS.disable_changelog {
             let pattern = self.get_bump_revspec(&bump_res.current);
-            let changelog = self.get_changelog_with_target_version(
-                pattern,
-                Target::Monorepo { manual: true },
-                tag.clone(),
-            )?;
+            let changelog =
+                self.get_changelog_with_target_version(pattern, target, bump_res.next.clone())?;
 
             changelog.pretty_print_bump_summary()?;
 
@@ -340,22 +315,12 @@ impl CocoGitto {
             )?;
         }
 
-        let current = self
-            .repository
-            .get_latest_tag(None, false)
-            .map(HookVersion::new)
-            .ok();
-        let next_version = HookVersion::new(tag.clone());
-
-        let hook_result = self.run_hooks(
-            HookRunOptions::pre_bump()
-                .current_tag(current.as_ref())
-                .next_version(&next_version)
-                .hook_profile(opts.hooks_config),
-        );
-
-        self.repository.add_all()?;
-        self.unwrap_or_stash_and_exit(&Tag::default(), hook_result);
+        self.run_hooks(
+            Some(&bump_res),
+            target,
+            HookType::PreBump,
+            opts.hooks_config,
+        )?;
 
         let disable_bump_commit = opts.disable_bump_commit || SETTINGS.disable_bump_commit;
 
@@ -365,16 +330,13 @@ impl CocoGitto {
             if opts.skip_ci || opts.skip_ci_override.is_some() {
                 let skip_ci_pattern = opts.skip_ci_override.unwrap_or(SETTINGS.skip_ci.clone());
                 self.repository.commit(
-                    &format!(
-                        "chore(version): {} {}",
-                        next_version.prefixed_tag, skip_ci_pattern
-                    ),
+                    &format!("chore(version): {} {}", bump_res.next, skip_ci_pattern),
                     sign,
                     true,
                 )?;
             } else {
                 self.repository.commit(
-                    &format!("chore(version): {}", next_version.prefixed_tag),
+                    &format!("chore(version): {}", bump_res.next),
                     sign,
                     true,
                 )?;
@@ -384,20 +346,21 @@ impl CocoGitto {
         if let Some(msg_tmpl) = opts.annotated {
             let mut context = tera::Context::new();
             context.insert("latest", &bump_res.current.version.to_string());
-            context.insert("version", &tag.version.to_string());
+            context.insert("version", &bump_res.next.version.to_string());
             let msg = Tera::one_off(&msg_tmpl, &context, false)?;
             self.repository
-                .create_annotated_tag(&tag, &msg, disable_bump_commit)?;
+                .create_annotated_tag(&bump_res.next, &msg, disable_bump_commit)?;
         } else {
-            self.repository.create_tag(&tag, disable_bump_commit)?;
+            self.repository
+                .create_tag(&bump_res.next, disable_bump_commit)?;
         }
 
         // Run global post hooks
         self.run_hooks(
-            HookRunOptions::post_bump()
-                .current_tag(current.as_ref())
-                .next_version(&next_version)
-                .hook_profile(opts.hooks_config),
+            Some(&bump_res),
+            target,
+            HookType::PostBump,
+            opts.hooks_config,
         )?;
 
         Ok(())
@@ -498,24 +461,17 @@ impl CocoGitto {
                 continue;
             }
 
-            let tag = Tag::create(bump_res.next.version, Some(package_name.to_string()));
+            let tag = Tag::create(
+                bump_res.next.version.clone(),
+                Some(package_name.to_string()),
+            );
             let increment = tag.get_increment_from(&bump_res.current);
 
-            if let Some(increment) = increment {
-                let old_version = if bump_res.current.is_zero() {
-                    None
-                } else {
-                    Some(HookVersion::new(bump_res.current.clone()))
-                };
-
+            if increment.is_some() {
                 package_bumps.push(PackageBumpData {
-                    package_name: package_name.to_string(),
-                    package_path: package.path.to_string_lossy().to_string(),
-                    public_api: package.public_api,
-                    current: bump_res.current,
-                    old_version,
-                    new_version: HookVersion::new(tag),
-                    increment,
+                    res: bump_res,
+                    name: package_name,
+                    package,
                 })
             }
         }
@@ -530,54 +486,39 @@ impl CocoGitto {
         package_bumps: &Vec<PackageBumpData>,
     ) -> Result<()> {
         for bump in package_bumps {
-            let package_name = &bump.package_name;
-            let tag = &bump.new_version.prefixed_tag;
-
-            let package = SETTINGS
-                .monorepo
-                .as_ref()
-                .and_then(|m| m.packages.get(package_name.as_str()))
-                .expect("package exists");
-
             if !SETTINGS.disable_changelog {
-                let pattern = self.get_bump_revspec(&bump.current);
+                let pattern = self.get_bump_revspec(&bump.res.current);
                 let changelog = self.get_changelog_with_target_version(
                     pattern,
-                    Target::package(package_name),
-                    tag.clone(),
+                    Target::Package {
+                        name: bump.name,
+                        package: bump.package,
+                    },
+                    bump.res.next.clone(),
                 )?;
 
                 changelog.pretty_print_bump_summary()?;
 
-                let path = package.changelog_path();
+                let path = bump.package.changelog_path();
                 let template = SETTINGS.get_package_changelog_template()?;
 
                 let additional_context = ReleaseType::Package(PackageContext {
-                    package_name: package_name.as_ref(),
+                    package_name: bump.name,
                 });
 
                 changelog.write_to_file(&path, template, additional_context)?;
                 info!("\tChangelog updated {:?}", path);
             }
 
-            let old_version = self
-                .repository
-                .get_latest_tag(Some(package_name), false)
-                .map(HookVersion::new)
-                .ok();
-
-            let new_version = HookVersion::new(tag.clone());
-
-            let hook_result = self.run_hooks(
-                HookRunOptions::pre_bump()
-                    .current_tag(old_version.as_ref())
-                    .next_version(&new_version)
-                    .hook_profile(hooks_config)
-                    .package(package_name, package),
-            );
-
-            self.repository.add_all()?;
-            self.unwrap_or_stash_and_exit(tag, hook_result);
+            self.run_hooks(
+                Some(&bump.res),
+                Target::Package {
+                    name: bump.name,
+                    package: bump.package,
+                },
+                HookType::PreBump,
+                hooks_config,
+            )?;
         }
 
         Ok(())
