@@ -17,7 +17,7 @@ impl Repository {
         let tree_id = self.0.index()?.write_tree()?;
         let tree = self.0.find_tree(tree_id)?;
         let is_empty = self.0.head().is_err();
-        let has_delta = self.get_diff(false).is_some();
+        let has_delta = self.has_uncommitted_changes(false);
         let has_delta_or_allowed_empty = has_delta || allow_empty_delta;
 
         if !is_empty && has_delta_or_allowed_empty {
