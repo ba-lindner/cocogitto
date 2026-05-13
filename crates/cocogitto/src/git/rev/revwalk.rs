@@ -3,10 +3,8 @@ use git2::Commit;
 use crate::git::error::Git2Error;
 use crate::git::oid::CommitInfo;
 use crate::git::repository::Repository;
-use crate::git::rev::filters::PackagePathFilter;
 use crate::git::rev::revspec::RevSpecPattern2;
 use crate::git::rev::CommitIter;
-use crate::SETTINGS;
 
 impl Repository {
     /// Return a commit range for the given package from a [`RevspecPattern2`]
@@ -17,46 +15,10 @@ impl Repository {
     ) -> Result<CommitIter<'_>, Git2Error> {
         let mut commit_range = self.revwalk(pattern)?;
         let mut commits = vec![];
-        let package = SETTINGS
-            .monorepo
-            .as_ref()
-            .and_then(|m| m.packages.get(package))
-            .expect("package exists");
-        let package_path_filter = PackagePathFilter::from_package(package);
 
         for (oid_of, commit) in commit_range.into_iter() {
-            let parent = commit.parent(0).ok().map(|commit| commit.id().to_string());
-
-            let parent_tree = self.tree_to_treeish(parent.as_ref())?;
-
-            let current_tree = self
-                .tree_to_treeish(Some(&commit.id().to_string()))?
-                .expect("Failed to get commit tree");
-
-            let diff = match parent_tree {
-                None => self
-                    .0
-                    .diff_tree_to_tree(None, current_tree.as_tree(), None)?,
-                Some(parent_tree) => {
-                    self.0
-                        .diff_tree_to_tree(parent_tree.as_tree(), current_tree.as_tree(), None)?
-                }
-            };
-
-            for delta in diff.deltas() {
-                if let Some(old) = delta.old_file().path() {
-                    if package_path_filter.is_match(old) {
-                        commits.push((oid_of, commit));
-                        break;
-                    }
-                }
-
-                if let Some(new) = delta.new_file().path() {
-                    if package_path_filter.is_match(new) {
-                        commits.push((oid_of, commit));
-                        break;
-                    }
-                }
+            if self.is_commit_in_package(&commit, package)? {
+                commits.push((oid_of, commit));
             }
         }
 
@@ -70,48 +32,10 @@ impl Repository {
     ) -> Result<CommitIter<'_>, Git2Error> {
         let mut commit_range = self.revwalk(pattern)?;
         let mut commits = vec![];
-        let package_paths: Vec<_> = SETTINGS
-            .monorepo
-            .as_ref()
-            .map(|m| m.packages.values())
-            .unwrap_or_default()
-            .map(|package| &package.path)
-            .collect();
 
         for (oid_of, commit) in commit_range.into_iter() {
-            let parent = commit.parent(0);
-
-            // First commit is always included in monorepo global tag
-            if parent.is_err() {
+            if self.is_commit_global(&commit)? {
                 commits.push((oid_of, commit));
-                continue;
-            }
-
-            let parent = parent?.id().to_string();
-            let t1 = self
-                .tree_to_treeish(Some(&parent))?
-                .expect("Failed to get parent tree");
-
-            let t2 = self
-                .tree_to_treeish(Some(&commit.id().to_string()))?
-                .expect("Failed to get commit tree");
-
-            let diff = self.0.diff_tree_to_tree(t1.as_tree(), t2.as_tree(), None)?;
-
-            for delta in diff.deltas() {
-                if let Some(old) = delta.old_file().path() {
-                    if package_paths.iter().all(|path| !old.starts_with(path)) {
-                        commits.push((oid_of, commit));
-                        break;
-                    }
-                }
-
-                if let Some(new) = delta.new_file().path() {
-                    if package_paths.iter().all(|path| !new.starts_with(path)) {
-                        commits.push((oid_of, commit));
-                        break;
-                    }
-                }
             }
         }
 
