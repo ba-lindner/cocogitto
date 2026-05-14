@@ -14,7 +14,6 @@ use crate::{settings, CocoGitto, SETTINGS};
 use anyhow::{bail, Result};
 
 use log::{info, warn};
-use tera::Tera;
 
 use crate::git::oid::ReleaseVersion;
 
@@ -72,29 +71,13 @@ impl CocoGitto {
 
         self.run_hooks(None, target, HookType::PreBump, opts.hooks_config)?;
 
-        let disable_bump_commit = opts.disable_bump_commit || SETTINGS.disable_bump_commit;
-
         self.bump_packages(opts.hooks_config, &bumps)?;
 
-        if !disable_bump_commit {
-            let sign = self.repository.gpg_sign();
-            if opts.skip_ci || opts.skip_ci_override.is_some() {
-                let skip_ci_pattern = opts.skip_ci_override.unwrap_or(SETTINGS.skip_ci.clone());
-                self.repository.commit(
-                    &format!("chore(version): bump packages {skip_ci_pattern}"),
-                    sign,
-                    true,
-                )?;
-            } else {
-                self.repository
-                    .commit("chore(version): bump packages", sign, true)?;
-            }
-        }
+        self.create_bump_commit(&opts, "bump packages")?;
 
         if SETTINGS.generate_mono_repository_package_tags {
             for bump in &bumps {
-                self.repository
-                    .create_tag(&bump.res.next, disable_bump_commit)?;
+                self.create_bump_tag(&bump.res, None)?;
             }
         }
 
@@ -150,7 +133,7 @@ impl CocoGitto {
             IncrementCommand::Auto
         };
 
-        let bump_res = opts.get_new_version(&self.repository, None, false, Some(increment))?;
+        let bump_res = self.get_new_version(&opts, None, false, Some(increment))?;
 
         if opts.dry_run {
             for bump in bumps {
@@ -207,44 +190,15 @@ impl CocoGitto {
         )?;
         self.bump_packages(opts.hooks_config, &bumps)?;
 
-        let disable_bump_commit = opts.disable_bump_commit || SETTINGS.disable_bump_commit;
-
-        if !disable_bump_commit {
-            let sign = self.repository.gpg_sign();
-            if opts.skip_ci || opts.skip_ci_override.is_some() {
-                let skip_ci_pattern = opts.skip_ci_override.unwrap_or(SETTINGS.skip_ci.clone());
-                self.repository.commit(
-                    &format!("chore(version): {} {}", bump_res.next, skip_ci_pattern),
-                    sign,
-                    true,
-                )?;
-            } else {
-                self.repository.commit(
-                    &format!("chore(version): {}", bump_res.next),
-                    sign,
-                    true,
-                )?;
-            }
-        }
+        self.create_bump_commit(&opts, &bump_res.next)?;
 
         if SETTINGS.generate_mono_repository_package_tags {
             for bump in &bumps {
-                self.repository
-                    .create_tag(&bump.res.next, disable_bump_commit)?;
+                self.create_bump_tag(&bump.res, None)?;
             }
         }
 
-        if let Some(msg_tmpl) = opts.annotated {
-            let mut context = tera::Context::new();
-            context.insert("latest", &bump_res.current.version.to_string());
-            context.insert("version", &bump_res.next.version.to_string());
-            let msg = Tera::one_off(&msg_tmpl, &context, false)?;
-            self.repository
-                .create_annotated_tag(&bump_res.next, &msg, disable_bump_commit)?;
-        } else {
-            self.repository
-                .create_tag(&bump_res.next, disable_bump_commit)?;
-        }
+        self.create_bump_tag(&bump_res, opts.annotated.as_deref())?;
 
         // Run per package post hooks
         for bump in bumps {
@@ -278,7 +232,7 @@ impl CocoGitto {
         // Get package bumps
         let bumps = self.get_current_packages()?;
 
-        let bump_res = opts.get_new_version(&self.repository, None, false, None)?;
+        let bump_res = self.get_new_version(&opts, None, false, None)?;
 
         if opts.dry_run {
             print!("{}", bump_res.next);
@@ -322,38 +276,9 @@ impl CocoGitto {
             opts.hooks_config,
         )?;
 
-        let disable_bump_commit = opts.disable_bump_commit || SETTINGS.disable_bump_commit;
+        self.create_bump_commit(&opts, &bump_res.next)?;
 
-        if !disable_bump_commit {
-            let sign = self.repository.gpg_sign();
-
-            if opts.skip_ci || opts.skip_ci_override.is_some() {
-                let skip_ci_pattern = opts.skip_ci_override.unwrap_or(SETTINGS.skip_ci.clone());
-                self.repository.commit(
-                    &format!("chore(version): {} {}", bump_res.next, skip_ci_pattern),
-                    sign,
-                    true,
-                )?;
-            } else {
-                self.repository.commit(
-                    &format!("chore(version): {}", bump_res.next),
-                    sign,
-                    true,
-                )?;
-            }
-        }
-
-        if let Some(msg_tmpl) = opts.annotated {
-            let mut context = tera::Context::new();
-            context.insert("latest", &bump_res.current.version.to_string());
-            context.insert("version", &bump_res.next.version.to_string());
-            let msg = Tera::one_off(&msg_tmpl, &context, false)?;
-            self.repository
-                .create_annotated_tag(&bump_res.next, &msg, disable_bump_commit)?;
-        } else {
-            self.repository
-                .create_tag(&bump_res.next, disable_bump_commit)?;
-        }
+        self.create_bump_tag(&bump_res, opts.annotated.as_deref())?;
 
         // Run global post hooks
         self.run_hooks(
@@ -455,8 +380,7 @@ impl CocoGitto {
                 IncrementCommand::AutoPackage(package_name.to_string())
             };
 
-            let bump_res =
-                opts.get_new_version(&self.repository, Some(package_name), true, Some(increment))?;
+            let bump_res = self.get_new_version(opts, Some(package_name), true, Some(increment))?;
             if bump_res.no_change() || !bump_res.had_commits {
                 continue;
             }

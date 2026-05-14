@@ -1,7 +1,85 @@
-use anyhow::{ensure, Result};
-use semver::Version;
+use anyhow::{bail, ensure, Result};
+use colored::Colorize as _;
+use semver::{BuildMetadata, Prerelease, Version};
 
+use super::{BumpOptions, BumpResult};
+use crate::conventional::error::BumpError as ConvBumpError;
+use crate::conventional::version::{IncrementCommand, PreCommand};
+use crate::git::error::TagError;
 use crate::git::tag::Tag;
+use crate::CocoGitto;
+
+impl CocoGitto {
+    pub(super) fn get_new_version(
+        &self,
+        opts: &BumpOptions<'_>,
+        package: Option<&str>,
+        allow_empty: bool,
+        increment: Option<IncrementCommand>,
+    ) -> Result<BumpResult> {
+        let current = match self.repository.get_latest_tag(package, false) {
+            Ok(tag) => tag,
+            Err(TagError::NoTag) => Tag::default(),
+            Err(other) => bail!(other),
+        };
+        let current_prerelease = self
+            .repository
+            .get_latest_tag(package, true)
+            .ok()
+            .filter(|tag| *tag > current);
+
+        let increment = increment.unwrap_or_else(|| opts.increment.clone());
+        let (mut next, had_commits) = match current.bump(increment, &self.repository) {
+            Ok(tag) => (tag, true),
+            Err(ConvBumpError::NoCommitFound) if allow_empty => (current.strip_metadata(), false),
+            Err(other) => bail!(other),
+        };
+
+        // if prerelease exists, ensure the new tag is not smaller
+        if let Some(pre_release) = &current_prerelease {
+            if next < *pre_release {
+                next.version.major = pre_release.version.major;
+                next.version.minor = pre_release.version.minor;
+                next.version.patch = pre_release.version.patch;
+            }
+        }
+
+        if current.version != next.version {
+            match opts.pre_release {
+                Some(PreCommand::Exact(pre)) => {
+                    next.version.pre = Prerelease::new(pre)?;
+                }
+                Some(PreCommand::Auto(pattern)) => {
+                    let pre = increment_prerelease(&current_prerelease, &next, pattern)?;
+                    next.version.pre = Prerelease::new(&pre)?;
+                }
+                None => {}
+            }
+
+            if let Some(build) = opts.build {
+                next.version.build = BuildMetadata::new(build)?;
+            }
+        }
+
+        // ensure version doesn't decrease
+        if next < current {
+            bail!(
+                "{}:\n\t{} version MUST be greater than current one: {}\n",
+                "SemVer Error".red(),
+                "cause:".red(),
+                format!("{next} <= {current}").red(),
+            );
+        }
+
+        next.package = package.map(ToString::to_string);
+
+        Ok(BumpResult {
+            current,
+            next,
+            had_commits,
+        })
+    }
+}
 
 /// Increments a pre-release version based on a pattern.
 ///
@@ -87,7 +165,8 @@ fn core_version(version: &Version) -> Version {
 mod test {
     use anyhow::Result;
 
-    use crate::{command::bump::increment_prerelease, git::tag::Tag};
+    use super::increment_prerelease;
+    use crate::git::tag::Tag;
 
     #[test]
     fn increment_prerelease_invalid_empty() -> Result<()> {
