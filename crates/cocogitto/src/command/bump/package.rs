@@ -1,9 +1,7 @@
 use crate::command::bump::PackageBumpOptions;
-use crate::conventional::changelog::context::PackageContext;
-use crate::conventional::changelog::ReleaseType;
 use crate::settings::HookType;
 use crate::target::Target;
-use crate::{CocoGitto, SETTINGS};
+use crate::CocoGitto;
 use anyhow::Result;
 use colored::*;
 use log::info;
@@ -26,20 +24,7 @@ impl CocoGitto {
             return Ok(());
         }
 
-        if !SETTINGS.disable_changelog {
-            let pattern = self.get_bump_revspec(&bump_res.current);
-            let changelog =
-                self.get_changelog_with_target_version(pattern, target, bump_res.next.clone())?;
-
-            changelog.pretty_print_bump_summary()?;
-
-            let path = opts.package.changelog_path();
-            let template = SETTINGS.get_package_changelog_template()?;
-            let additional_context = ReleaseType::Package(PackageContext {
-                package_name: opts.package_name,
-            });
-            changelog.write_to_file(path, template, additional_context)?;
-        }
+        self.render_changelog(&bump_res, target, None)?;
 
         self.run_hooks(
             Some(&bump_res),

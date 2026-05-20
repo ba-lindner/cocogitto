@@ -1,6 +1,5 @@
 use crate::conventional::version::IncrementCommand;
 use crate::conventional::version::PreCommand;
-use crate::git::rev::revspec::RevSpecPattern2;
 use crate::git::tag::Tag;
 use crate::settings::{MonoRepoPackage, Settings};
 use crate::{CocoGitto, SETTINGS};
@@ -81,15 +80,6 @@ impl<'a> PackageBumpOptions<'a> {
 }
 
 impl CocoGitto {
-    fn get_bump_revspec(&mut self, current_tag: &Tag) -> RevSpecPattern2 {
-        if current_tag.is_zero() {
-            RevSpecPattern2::full()
-        } else {
-            // this function is always called with the latest tag, so it should always have a oid
-            RevSpecPattern2::from(*current_tag.oid_unchecked())
-        }
-    }
-
     fn pre_bump_checks(&mut self, skip_untracked: bool) -> Result<()> {
         if *SETTINGS == Settings::default() {
             let part1 = "Warning: using".yellow();

@@ -4,12 +4,18 @@ use conventional_commit_parser::commit::CommitType;
 use itertools::Itertools as _;
 use log::info;
 
+use crate::command::bump::BumpResult;
+use crate::conventional::changelog::context::{
+    MonoRepoContext, PackageBumpContext, PackageContext,
+};
 use crate::conventional::changelog::release::Release;
+use crate::conventional::changelog::ReleaseType;
 use crate::conventional::commit::Commit;
+use crate::git::oid::ReleaseVersion;
 use crate::git::rev::revspec::RevSpecPattern2;
 use crate::git::tag::Tag;
 use crate::target::Target;
-use crate::{CocoGitto, COMMITS_METADATA};
+use crate::{settings, CocoGitto, COMMITS_METADATA, SETTINGS};
 
 use std::fmt::Write as _;
 
@@ -17,20 +23,29 @@ impl CocoGitto {
     /// The target version is not created yet when generating the changelog.
     pub fn get_changelog_with_target_version(
         &self,
-        pattern: RevSpecPattern2,
         target: Target,
-        tag: Tag,
+        from: &Tag,
+        version: &Tag,
     ) -> Result<Release> {
         let allow_empty = matches!(target, Target::Monorepo { .. });
+        let pattern = if from.is_zero() {
+            RevSpecPattern2::full()
+        } else {
+            RevSpecPattern2 {
+                from: from.oid,
+                to: None,
+            }
+        };
+        let version: ReleaseVersion = version.clone().into();
         let commit_range = self.repository.revwalk(pattern)?.for_target(target)?;
         let fallback_from = commit_range.version_range().0;
         let release = match Release::try_from(commit_range) {
             Ok(mut release) => {
-                release.version = tag.into();
+                release.version = version;
                 release
             }
             Err(_) if allow_empty => Release {
-                version: tag.into(),
+                version,
                 from: fallback_from,
                 date: Default::default(),
                 commits: vec![],
@@ -39,6 +54,49 @@ impl CocoGitto {
             Err(why) => bail!(why),
         };
         Ok(release)
+    }
+
+    pub(super) fn render_changelog(
+        &self,
+        bump: &BumpResult,
+        target: Target,
+        packages: Option<Vec<PackageBumpContext<'_>>>,
+    ) -> Result<()> {
+        if SETTINGS.disable_changelog {
+            return Ok(());
+        }
+
+        let (template, kind, path) = match target {
+            Target::Standard => (
+                SETTINGS.get_changelog_template()?,
+                ReleaseType::Standard,
+                settings::changelog_path().to_owned(),
+            ),
+            Target::Package { name, package } => (
+                SETTINGS.get_package_changelog_template()?,
+                ReleaseType::Package(PackageContext { package_name: name }),
+                package.changelog_path(),
+            ),
+            Target::Monorepo { manual } | Target::Unified { manual } => (
+                SETTINGS.get_monorepo_changelog_template()?,
+                ReleaseType::MonoRepo(MonoRepoContext {
+                    package_lock: manual,
+                    packages: packages.unwrap_or_default(),
+                }),
+                settings::changelog_path().to_owned(),
+            ),
+        };
+
+        let changelog =
+            self.get_changelog_with_target_version(target, &bump.current, &bump.next)?;
+
+        changelog.pretty_print_bump_summary()?;
+
+        changelog.write_to_file(&path, template, kind)?;
+
+        info!("\tChangelog updated {:?}", path);
+
+        Ok(())
     }
 }
 

@@ -1,19 +1,16 @@
 use std::collections::HashMap;
 
 use crate::command::bump::{BumpOptions, BumpResult};
-use crate::conventional::changelog::context::{
-    MonoRepoContext, PackageBumpContext, PackageContext,
-};
-use crate::conventional::changelog::ReleaseType;
+use crate::conventional::changelog::context::PackageBumpContext;
 use crate::conventional::version::{Increment, IncrementCommand};
 use crate::git::error::TagError;
 use crate::git::tag::Tag;
 use crate::settings::{HookType, MonoRepoPackage};
 use crate::target::Target;
-use crate::{settings, CocoGitto, SETTINGS};
+use crate::{CocoGitto, SETTINGS};
 use anyhow::{bail, Result};
 
-use log::{info, warn};
+use log::warn;
 
 use crate::git::oid::ReleaseVersion;
 
@@ -162,25 +159,7 @@ impl CocoGitto {
             })
         }
 
-        if !SETTINGS.disable_changelog {
-            let pattern = self.get_bump_revspec(&bump_res.current);
-            let changelog =
-                self.get_changelog_with_target_version(pattern, target, bump_res.next.clone())?;
-
-            changelog.pretty_print_bump_summary()?;
-
-            let path = settings::changelog_path();
-            let template = SETTINGS.get_monorepo_changelog_template()?;
-
-            changelog.write_to_file(
-                path,
-                template,
-                ReleaseType::MonoRepo(MonoRepoContext {
-                    package_lock: false,
-                    packages: template_context,
-                }),
-            )?;
-        }
+        self.render_changelog(&bump_res, target, Some(template_context))?;
 
         self.run_hooks(
             Some(&bump_res),
@@ -249,25 +228,7 @@ impl CocoGitto {
             })
         }
 
-        if !SETTINGS.disable_changelog {
-            let pattern = self.get_bump_revspec(&bump_res.current);
-            let changelog =
-                self.get_changelog_with_target_version(pattern, target, bump_res.next.clone())?;
-
-            changelog.pretty_print_bump_summary()?;
-
-            let path = settings::changelog_path();
-            let template = SETTINGS.get_monorepo_changelog_template()?;
-
-            changelog.write_to_file(
-                path,
-                template,
-                ReleaseType::MonoRepo(MonoRepoContext {
-                    package_lock: true,
-                    packages: template_context,
-                }),
-            )?;
-        }
+        self.render_changelog(&bump_res, target, Some(template_context))?;
 
         self.run_hooks(
             Some(&bump_res),
@@ -410,39 +371,14 @@ impl CocoGitto {
         package_bumps: &Vec<PackageBumpData>,
     ) -> Result<()> {
         for bump in package_bumps {
-            if !SETTINGS.disable_changelog {
-                let pattern = self.get_bump_revspec(&bump.res.current);
-                let changelog = self.get_changelog_with_target_version(
-                    pattern,
-                    Target::Package {
-                        name: bump.name,
-                        package: bump.package,
-                    },
-                    bump.res.next.clone(),
-                )?;
+            let target = Target::Package {
+                name: bump.name,
+                package: bump.package,
+            };
 
-                changelog.pretty_print_bump_summary()?;
+            self.render_changelog(&bump.res, target, None)?;
 
-                let path = bump.package.changelog_path();
-                let template = SETTINGS.get_package_changelog_template()?;
-
-                let additional_context = ReleaseType::Package(PackageContext {
-                    package_name: bump.name,
-                });
-
-                changelog.write_to_file(&path, template, additional_context)?;
-                info!("\tChangelog updated {:?}", path);
-            }
-
-            self.run_hooks(
-                Some(&bump.res),
-                Target::Package {
-                    name: bump.name,
-                    package: bump.package,
-                },
-                HookType::PreBump,
-                hooks_config,
-            )?;
+            self.run_hooks(Some(&bump.res), target, HookType::PreBump, hooks_config)?;
         }
 
         Ok(())
