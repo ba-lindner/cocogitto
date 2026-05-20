@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::command::bump::{BumpOptions, BumpResult};
 use crate::conventional::changelog::context::PackageBumpContext;
-use crate::conventional::version::{Increment, IncrementCommand};
+use crate::conventional::version::IncrementCommand;
 use crate::git::error::TagError;
 use crate::git::tag::Tag;
 use crate::settings::{HookType, MonoRepoPackage};
@@ -49,8 +49,6 @@ impl CocoGitto {
     pub fn create_all_package_version_auto(&mut self, opts: BumpOptions) -> Result<()> {
         self.pre_bump_checks(opts.skip_untracked)?;
 
-        let target = Target::Monorepo { manual: false };
-
         // Get package bumps
         let bumps = self.get_packages_bumps(&opts)?;
 
@@ -66,7 +64,7 @@ impl CocoGitto {
             return Ok(());
         }
 
-        self.run_hooks(None, target, HookType::PreBump, opts.hooks_config)?;
+        self.run_hooks(None, HookType::PreBump, opts.hooks_config)?;
 
         self.bump_packages(opts.hooks_config, &bumps)?;
 
@@ -80,27 +78,17 @@ impl CocoGitto {
 
         // Run per package post hooks
         for bump in bumps {
-            self.run_hooks(
-                Some(&bump.res),
-                Target::Package {
-                    name: bump.name,
-                    package: bump.package,
-                },
-                HookType::PostBump,
-                opts.hooks_config,
-            )?;
+            self.run_hooks(Some(&bump.res), HookType::PostBump, opts.hooks_config)?;
         }
 
         // Run global post hooks
-        self.run_hooks(None, target, HookType::PostBump, opts.hooks_config)?;
+        self.run_hooks(None, HookType::PostBump, opts.hooks_config)?;
 
         Ok(())
     }
 
     fn create_monorepo_version_auto(&mut self, opts: BumpOptions) -> Result<()> {
         self.pre_bump_checks(opts.skip_untracked)?;
-
-        let target = Target::Monorepo { manual: false };
 
         // Get package bumps
         let bumps = self.get_packages_bumps(&opts)?;
@@ -109,28 +97,15 @@ impl CocoGitto {
             return Ok(());
         }
 
-        // Manual bump with `--include-packages` -> don't override increment command
-        let increment = if opts.increment != IncrementCommand::Auto {
-            opts.increment.clone()
-        } else if SETTINGS.generate_mono_repository_package_tags {
-            // Get the greatest package increment among public api packages
-            IncrementCommand::AutoMonoRepoGlobal(
-                bumps
-                    .iter()
-                    .filter(|bump| bump.package.public_api)
-                    .map(|bump| {
-                        bump.res
-                            .next
-                            .get_increment_from(&bump.res.current)
-                            .unwrap_or(Increment::NoBump)
-                    })
-                    .max(),
-            )
-        } else {
-            IncrementCommand::Auto
-        };
-
-        let bump_res = self.get_new_version(&opts, None, false, Some(increment))?;
+        let package_increment = bumps
+            .iter()
+            .filter(|bump| {
+                // required to reproduce current behaviour
+                bump.package.public_api || !SETTINGS.generate_mono_repository_package_tags
+            })
+            .map(|bump| bump.res.increment())
+            .max();
+        let bump_res = self.get_new_version(&opts, false, package_increment)?;
 
         if opts.dry_run {
             for bump in bumps {
@@ -159,14 +134,9 @@ impl CocoGitto {
             })
         }
 
-        self.render_changelog(&bump_res, target, Some(template_context))?;
+        self.render_changelog(&bump_res, Some(template_context))?;
 
-        self.run_hooks(
-            Some(&bump_res),
-            target,
-            HookType::PreBump,
-            opts.hooks_config,
-        )?;
+        self.run_hooks(Some(&bump_res), HookType::PreBump, opts.hooks_config)?;
         self.bump_packages(opts.hooks_config, &bumps)?;
 
         self.create_bump_commit(&opts, &bump_res.next)?;
@@ -181,24 +151,11 @@ impl CocoGitto {
 
         // Run per package post hooks
         for bump in bumps {
-            self.run_hooks(
-                Some(&bump.res),
-                Target::Package {
-                    name: bump.name,
-                    package: bump.package,
-                },
-                HookType::PostBump,
-                opts.hooks_config,
-            )?;
+            self.run_hooks(Some(&bump.res), HookType::PostBump, opts.hooks_config)?;
         }
 
         // Run global post hooks
-        self.run_hooks(
-            Some(&bump_res),
-            target,
-            HookType::PostBump,
-            opts.hooks_config,
-        )?;
+        self.run_hooks(Some(&bump_res), HookType::PostBump, opts.hooks_config)?;
 
         Ok(())
     }
@@ -206,12 +163,10 @@ impl CocoGitto {
     fn create_monorepo_version_manual(&mut self, opts: BumpOptions) -> Result<()> {
         self.pre_bump_checks(opts.skip_untracked)?;
 
-        let target = Target::Monorepo { manual: true };
-
         // Get package bumps
         let bumps = self.get_current_packages()?;
 
-        let bump_res = self.get_new_version(&opts, None, false, None)?;
+        let bump_res = self.get_new_version(&opts, false, None)?;
 
         if opts.dry_run {
             print!("{}", bump_res.next);
@@ -228,26 +183,16 @@ impl CocoGitto {
             })
         }
 
-        self.render_changelog(&bump_res, target, Some(template_context))?;
+        self.render_changelog(&bump_res, Some(template_context))?;
 
-        self.run_hooks(
-            Some(&bump_res),
-            target,
-            HookType::PreBump,
-            opts.hooks_config,
-        )?;
+        self.run_hooks(Some(&bump_res), HookType::PreBump, opts.hooks_config)?;
 
         self.create_bump_commit(&opts, &bump_res.next)?;
 
         self.create_bump_tag(&bump_res, opts.annotated.as_deref())?;
 
         // Run global post hooks
-        self.run_hooks(
-            Some(&bump_res),
-            target,
-            HookType::PostBump,
-            opts.hooks_config,
-        )?;
+        self.run_hooks(Some(&bump_res), HookType::PostBump, opts.hooks_config)?;
 
         Ok(())
     }
@@ -335,13 +280,15 @@ impl CocoGitto {
         }
 
         for (package_name, package) in packages {
-            let increment = if opts.increment != IncrementCommand::Auto {
-                opts.increment.clone()
-            } else {
-                IncrementCommand::AutoPackage(package_name.to_string())
+            let opts = BumpOptions {
+                target: Target::Package {
+                    name: package_name,
+                    package,
+                },
+                ..opts.clone()
             };
 
-            let bump_res = self.get_new_version(opts, Some(package_name), true, Some(increment))?;
+            let bump_res = self.get_new_version(&opts, true, None)?;
             if bump_res.no_change() || !bump_res.had_commits {
                 continue;
             }
@@ -371,14 +318,9 @@ impl CocoGitto {
         package_bumps: &Vec<PackageBumpData>,
     ) -> Result<()> {
         for bump in package_bumps {
-            let target = Target::Package {
-                name: bump.name,
-                package: bump.package,
-            };
+            self.render_changelog(&bump.res, None)?;
 
-            self.render_changelog(&bump.res, target, None)?;
-
-            self.run_hooks(Some(&bump.res), target, HookType::PreBump, hooks_config)?;
+            self.run_hooks(Some(&bump.res), HookType::PreBump, hooks_config)?;
         }
 
         Ok(())

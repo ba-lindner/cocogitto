@@ -1,4 +1,4 @@
-use semver::{BuildMetadata, Prerelease, Version};
+use semver::Version;
 
 use crate::conventional::error::BumpError;
 use crate::conventional::version::Increment;
@@ -6,53 +6,59 @@ use crate::git::rev::revspec::RevSpecPattern2;
 use crate::target::Target;
 use crate::{Commit, IncrementCommand, Repository, Tag};
 
+#[derive(Debug, PartialEq, Clone)]
+pub(crate) enum IncrementStrategy {
+    Fixed(Increment),
+    Auto(Target, Option<Increment>),
+    Manual(String),
+}
+
+impl IncrementCommand {
+    pub(crate) fn as_strategy(
+        &self,
+        target: Target,
+        package_increment: Option<Increment>,
+    ) -> IncrementStrategy {
+        match self {
+            IncrementCommand::Auto => IncrementStrategy::Auto(target, package_increment),
+            IncrementCommand::Major => IncrementStrategy::Fixed(Increment::Major),
+            IncrementCommand::Minor => IncrementStrategy::Fixed(Increment::Minor),
+            IncrementCommand::Patch => IncrementStrategy::Fixed(Increment::Patch),
+            IncrementCommand::Manual(version) => IncrementStrategy::Manual(version.clone()),
+        }
+    }
+}
+
 impl Tag {
-    fn manual_bump(&self, version: &str) -> Result<Self, semver::Error> {
-        let mut next = self.clone();
-        next.version = Version::parse(version)?;
-        Ok(next)
+    fn fixed_bump(&self, increment: Increment) -> Version {
+        match increment {
+            Increment::Major => Version::new(self.version.major + 1, 0, 0),
+            Increment::Minor => Version::new(self.version.major, self.version.minor + 1, 0),
+            Increment::Patch => Version::new(
+                self.version.major,
+                self.version.minor,
+                self.version.patch + 1,
+            ),
+            Increment::NoBump => {
+                Version::new(self.version.major, self.version.minor, self.version.patch)
+            }
+        }
     }
 
-    fn major_bump(&self) -> Self {
-        let mut next = self.clone();
-        next.version.major += 1;
-        next.version.minor = 0;
-        next.version.patch = 0;
-        next.reset_metadata()
-    }
-
-    fn minor_bump(&self) -> Self {
-        let mut next = self.clone();
-        next.version.minor += 1;
-        next.version.patch = 0;
-        next.reset_metadata()
-    }
-
-    fn patch_bump(&self) -> Self {
-        let mut next = self.clone();
-        next.version.patch += 1;
-        next.reset_metadata()
-    }
-
-    fn no_bump(&self) -> Self {
-        let next = self.clone();
-        next.reset_metadata()
-    }
-
-    fn auto_global_bump(
+    fn auto_bump(
         &self,
         repository: &Repository,
+        target: Target,
         package_increment: Option<Increment>,
-    ) -> Result<Self, BumpError> {
-        let tag_from_history =
-            self.get_version_from_commit_history(repository, Target::Monorepo { manual: false });
-        match (package_increment, tag_from_history) {
-            (Some(package_increment), Ok(tag_from_history)) => {
-                let tag_from_packages = self.bump(package_increment.into(), repository)?;
-                Ok(tag_from_packages.max(tag_from_history))
+    ) -> Result<Version, BumpError> {
+        let version_from_history = self.get_version_from_commit_history(repository, target);
+        match (package_increment, version_from_history) {
+            (Some(package_increment), Ok(version_from_history)) => {
+                let tag_from_packages = self.fixed_bump(package_increment);
+                Ok(tag_from_packages.max(version_from_history))
             }
             (Some(package_increment), Err(_)) => {
-                let tag_from_packages = self.bump(package_increment.into(), repository)?;
+                let tag_from_packages = self.fixed_bump(package_increment);
                 Ok(tag_from_packages)
             }
             (None, Ok(tag_from_history)) => Ok(tag_from_history),
@@ -62,39 +68,23 @@ impl Tag {
 
     pub(crate) fn bump(
         &self,
-        increment: IncrementCommand,
+        increment: IncrementStrategy,
         repository: &Repository,
-    ) -> Result<Self, BumpError> {
+    ) -> Result<Version, BumpError> {
         match increment {
-            IncrementCommand::Major => Ok(self.major_bump()),
-            IncrementCommand::Minor => Ok(self.minor_bump()),
-            IncrementCommand::Patch => Ok(self.patch_bump()),
-            IncrementCommand::NoBump => Ok(self.no_bump()),
-            IncrementCommand::Auto => {
-                self.get_version_from_commit_history(repository, Target::Standard)
+            IncrementStrategy::Fixed(increment) => Ok(self.fixed_bump(increment)),
+            IncrementStrategy::Auto(target, package_increment) => {
+                self.auto_bump(repository, target, package_increment)
             }
-            IncrementCommand::AutoPackage(package) => {
-                self.get_version_from_commit_history(repository, Target::package(&package))
-            }
-            IncrementCommand::AutoMonoRepoGlobal(package_increment) => {
-                self.auto_global_bump(repository, package_increment)
-            }
-            IncrementCommand::Manual(version) => self.manual_bump(&version).map_err(Into::into),
+            IncrementStrategy::Manual(version) => Version::parse(&version).map_err(Into::into),
         }
-    }
-
-    fn reset_metadata(mut self) -> Self {
-        self.version.build = BuildMetadata::EMPTY;
-        self.version.pre = Prerelease::EMPTY;
-        self.oid = None;
-        self
     }
 
     fn get_version_from_commit_history(
         &self,
         repository: &Repository,
         target: Target,
-    ) -> Result<Tag, BumpError> {
+    ) -> Result<Version, BumpError> {
         let changelog_start_oid = repository
             .get_latest_tag(self.package.as_deref(), false)
             .ok()
@@ -112,14 +102,9 @@ impl Tag {
             .filter_map(Result::ok)
             .collect();
 
-        let increment_type = self.version_increment_from_commit_history(&conventional_commits)?;
+        let increment = self.version_increment_from_commit_history(&conventional_commits)?;
 
-        Ok(match increment_type {
-            Increment::Major => self.major_bump(),
-            Increment::Minor => self.minor_bump(),
-            Increment::Patch => self.patch_bump(),
-            Increment::NoBump => self.no_bump(),
-        })
+        Ok(self.fixed_bump(increment))
     }
 
     pub fn version_increment_from_commit_history(
@@ -139,7 +124,6 @@ mod test {
     use std::collections::HashMap;
     use std::fs;
     use std::path::PathBuf;
-    use std::str::FromStr;
 
     use anyhow::Result;
     use chrono::Utc;
@@ -151,7 +135,7 @@ mod test {
 
     use crate::conventional::commit::{Commit, CommitConfig};
     use crate::conventional::error::BumpError;
-    use crate::conventional::version::{Increment, IncrementCommand};
+    use crate::conventional::version::Increment;
     use crate::git::repository::Repository;
     use crate::git::tag::Tag;
     use crate::settings::{MonoRepoPackage, MonorepoConfig, Settings};
@@ -176,60 +160,36 @@ mod test {
         }
     }
 
-    #[sealed_test]
+    fn fixed_bump_test(base: &str, increment: Increment, expected: Version) -> Result<()> {
+        // Arrange
+        let base_version = Tag::from_str(base, None)?;
+
+        // Act
+        let version = base_version.fixed_bump(increment);
+
+        // Assert
+        assert_that!(version).is_equal_to(expected);
+        Ok(())
+    }
+
+    #[test]
     fn major_bump() -> Result<()> {
-        // Arrange
-        let repository = git_init_no_gpg()?;
-        let base_version = Tag::from_str("1.0.0", None)?;
-
-        // Act
-        let tag = base_version.bump(IncrementCommand::Major, &repository)?;
-
-        // Assert
-        assert_that!(tag.version).is_equal_to(Version::new(2, 0, 0));
-        Ok(())
+        fixed_bump_test("1.0.0", Increment::Major, Version::new(2, 0, 0))
     }
 
-    #[sealed_test]
+    #[test]
     fn minor_bump() -> Result<()> {
-        // Arrange
-        let repository = git_init_no_gpg()?;
-        let base_version = Tag::from_str("1.0.0", None)?;
-
-        // Act
-        let tag = base_version.bump(IncrementCommand::Minor, &repository)?;
-
-        // Assert
-        assert_that!(tag.version).is_equal_to(Version::new(1, 1, 0));
-        Ok(())
+        fixed_bump_test("1.0.0", Increment::Minor, Version::new(1, 1, 0))
     }
 
-    #[sealed_test]
+    #[test]
     fn patch_bump() -> Result<()> {
-        // Arrange
-        let repository = git_init_no_gpg()?;
-        let base_version = Tag::from_str("1.0.0", None)?;
-
-        // Act
-        let tag = base_version.bump(IncrementCommand::Patch, &repository)?;
-
-        // Assert
-        assert_that!(tag.version).is_equal_to(Version::new(1, 0, 1));
-        Ok(())
+        fixed_bump_test("1.0.0", Increment::Patch, Version::new(1, 0, 1))
     }
 
-    #[sealed_test]
+    #[test]
     fn no_bump() -> Result<()> {
-        // Arrange
-        let repository = git_init_no_gpg()?;
-        let base_version = Tag::from_str("1.0.0", None)?;
-
-        // Act
-        let tag = base_version.bump(IncrementCommand::NoBump, &repository)?;
-
-        // Assert
-        assert_that!(tag.version).is_equal_to(Version::new(1, 0, 0));
-        Ok(())
+        fixed_bump_test("1.0.0", Increment::NoBump, Version::new(1, 0, 0))
     }
 
     #[test]
@@ -285,49 +245,19 @@ mod test {
         Ok(())
     }
 
-    #[sealed_test]
+    #[test]
     fn increment_minor_version_should_set_patch_to_zero() -> Result<()> {
-        // Arrange
-        let repository = git_init_no_gpg()?;
-        let version = Tag::from_str("1.1.1", None)?;
-
-        // Act
-        let tag = version.bump(IncrementCommand::Minor, &repository)?;
-
-        // Assert
-        assert_that!(tag.version).is_equal_to(Version::from_str("1.2.0")?);
-
-        Ok(())
+        fixed_bump_test("1.1.1", Increment::Minor, Version::new(1, 2, 0))
     }
 
-    #[sealed_test]
+    #[test]
     fn increment_major_version_should_set_minor_and_patch_to_zero() -> Result<()> {
-        // Arrange
-        let repository = git_init_no_gpg()?;
-        let version = Tag::from_str("1.1.1", None)?;
-
-        // Act
-        let tag = version.bump(IncrementCommand::Major, &repository)?;
-
-        // Assert
-        assert_that!(tag.version).is_equal_to(Version::from_str("2.0.0")?);
-
-        Ok(())
+        fixed_bump_test("1.1.1", Increment::Major, Version::new(2, 0, 0))
     }
 
-    #[sealed_test]
+    #[test]
     fn increment_should_strip_metadata() -> Result<()> {
-        // Arrange
-        let repository = git_init_no_gpg()?;
-        let version = Tag::from_str("1.1.1-pre+10.1", None)?;
-
-        // Act
-        let tag = version.bump(IncrementCommand::Patch, &repository)?;
-
-        // Assert
-        assert_that!(tag.version).is_equal_to(Version::from_str("1.1.2")?);
-
-        Ok(())
+        fixed_bump_test("1.1.1-pre+10.0", Increment::Patch, Version::new(1, 1, 2))
     }
 
     #[test]
@@ -518,107 +448,91 @@ mod test {
         let base_version = Tag::from_str("0.1.0", None)?;
 
         // Act
-        let tag = base_version.auto_global_bump(&repository, Some(Increment::Minor))?;
+        let version = base_version.auto_bump(
+            &repository,
+            Target::Monorepo { manual: false },
+            Some(Increment::Minor),
+        )?;
 
         // Assert
-        assert_that!(tag.version).is_equal_to(Version::new(0, 2, 0));
+        assert_that!(version).is_equal_to(Version::new(0, 2, 0));
 
         Ok(())
+    }
+
+    macro_rules! monorepo_test {
+        // uses , instead of . to avoid parsing version as float
+        ($pkg:expr => $major:literal , $minor:literal , $patch:literal ; $($setup:tt)*) => {
+            // Arrange
+            let repository = init_monorepo()?;
+
+            run_cmd!(
+                $($setup)*
+            )?;
+
+            // Act
+            let version = Tag::default().auto_bump(&repository, Target::Monorepo { manual: false }, $pkg)?;
+
+            // Assert
+            assert_that!(version).is_equal_to(Version::new($major, $minor, $patch));
+
+            Ok(())
+        }
     }
 
     #[sealed_test]
     fn monorepo_auto_bump_should_succeed_with_only_global_commits() -> Result<()> {
-        // Arrange
-        let repository = init_monorepo()?;
-
-        run_cmd!(
+        monorepo_test! {
+            None => 0,1,0;
             echo "global" > global;
             git add .;
             git commit -m "feat: non package commit";
-        )?;
-
-        // Act
-        let tag = Tag::default().auto_global_bump(&repository, None)?;
-
-        // Assert
-        assert_that!(tag.version).is_equal_to(Version::new(0, 1, 0));
-
-        Ok(())
+        }
     }
 
     #[sealed_test]
     fn monorepo_auto_bump_should_succeed_selecting_history_bump() -> Result<()> {
-        // Arrange
-        let repository = init_monorepo()?;
-
-        // Patch increment from global commits
-        // Minor increment from package bumps
-        run_cmd!(
+        monorepo_test! {
+            Some(Increment::Minor) => 0,1,0;
+            // Patch increment from global commits
+            // Minor increment from package bumps
             echo "global" > global;
             git add .;
             git commit -m "fix: global fix";
             echo "feature" > one;
             git add .;
             git commit -m "feat: feature 1 package one";
-        )?;
-
-        // Act
-        let tag = Tag::default().auto_global_bump(&repository, Some(Increment::Minor))?;
-
-        // Assert
-        assert_that!(tag.version).is_equal_to(Version::new(0, 1, 0));
-
-        Ok(())
+        }
     }
 
     #[sealed_test]
     fn monorepo_auto_bump_should_succeed_selecting_package_bump() -> Result<()> {
-        // Arrange
-        let repository = init_monorepo()?;
-
-        // Minor increment from global commits
-        // Patch increment from package bumps
-        run_cmd!(
+        monorepo_test! {
+            Some(Increment::Patch) => 0,1,0;
+            // Minor increment from global commits
+            // Patch increment from package bumps
             echo "global" > global;
             git add .;
             git commit -m "feat: global fix";
             echo "feature" > one;
             git add .;
             git commit -m "fix: fix 1 package one";
-        )?;
-
-        // Act
-        let tag = Tag::default().auto_global_bump(&repository, Some(Increment::Patch))?;
-
-        // Assert
-        assert_that!(tag.version).is_equal_to(Version::new(0, 1, 0));
-
-        Ok(())
+        }
     }
 
     #[sealed_test]
     fn monorepo_auto_bump_should_succeed_with_equals_history_and_package() -> Result<()> {
-        // Arrange
-        let repository = init_monorepo()?;
-
-        // Minor increment from global commits
-        // Minor increment from package bumps
-        run_cmd!(
+        monorepo_test! {
+            Some(Increment::Minor) => 0,1,0;
+            // Minor increment from global commits
+            // Minor increment from package bumps
             echo "global" > global;
             git add .;
             git commit -m "feat: global fix";
             echo "feature" > one;
             git add .;
             git commit -m "feature: package one";
-        )?;
-
-        // Act
-        let tag = Tag::default().auto_global_bump(&repository, Some(Increment::Minor))?;
-
-        // Assert
-        assert_that!(tag.version).is_equal_to(Version::new(0, 1, 0));
-
-        Ok(())
+        }
     }
 
     #[sealed_test]
@@ -641,11 +555,14 @@ mod test {
         )?;
 
         // Act
-        let tag =
-            Tag::from_str("0.1.0", None)?.auto_global_bump(&repository, Some(Increment::Minor))?;
+        let version = Tag::from_str("0.1.0", None)?.auto_bump(
+            &repository,
+            Target::Monorepo { manual: false },
+            Some(Increment::Minor),
+        )?;
 
         // Assert
-        assert_that!(tag.version).is_equal_to(Version::new(0, 2, 0));
+        assert_that!(version).is_equal_to(Version::new(0, 2, 0));
 
         Ok(())
     }

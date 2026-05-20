@@ -13,6 +13,7 @@ use cocogitto::conventional::version::{IncrementCommand, PreCommand};
 
 use cocogitto::log::filter::{CommitFilter, CommitFilters};
 use cocogitto::log::output::Output;
+use cocogitto::target::Target;
 use cocogitto::{set_config_path, CocoGitto, CommitHook, DEFAULT_CONFIG_PATH, SETTINGS};
 
 use crate::commit::prepare_edit_message;
@@ -21,7 +22,7 @@ use clap::builder::{PossibleValue, PossibleValuesParser};
 use clap::{ArgAction, ArgGroup, Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::{shells, Generator};
 use clap_complete_nushell::Nushell;
-use cocogitto::command::bump::{BumpOptions, PackageBumpOptions};
+use cocogitto::command::bump::BumpOptions;
 use cocogitto::command::commit::CommitOptions;
 use cocogitto::settings::GitHookType;
 
@@ -482,18 +483,11 @@ fn main() -> Result<()> {
                 .map(|m| !m.packages.is_empty())
                 .unwrap_or(false);
 
+            let target = Target::from_options(package.as_deref(), version.is_some(), false);
+
             let increment = match version {
                 Some(version) => IncrementCommand::Manual(version),
-                None if auto => match package.as_ref() {
-                    Some(package) => {
-                        if !is_monorepo {
-                            bail!("Cannot create package version on non mono-repository config")
-                        };
-
-                        IncrementCommand::AutoPackage(package.to_owned())
-                    }
-                    None => IncrementCommand::Auto,
-                },
+                None if auto => IncrementCommand::Auto,
                 None if major => IncrementCommand::Major,
                 None if minor => IncrementCommand::Minor,
                 None if patch => IncrementCommand::Patch,
@@ -510,65 +504,24 @@ fn main() -> Result<()> {
                 }
             });
 
-            if is_monorepo {
-                match package {
-                    Some(package_name) => {
-                        // Safe unwrap here, package name is validated by clap
-                        let package = SETTINGS
-                            .monorepo
-                            .as_ref()
-                            .and_then(|m| m.packages.get(&package_name))
-                            .unwrap();
+            let opts = BumpOptions {
+                target,
+                increment,
+                pre_release,
+                build: build.as_deref(),
+                hooks_config: hook_profile.as_deref(),
+                annotated,
+                dry_run,
+                skip_ci,
+                skip_ci_override,
+                skip_untracked,
+                disable_bump_commit,
+                include_packages,
+            };
 
-                        let opts = PackageBumpOptions {
-                            package_name: &package_name,
-                            package,
-                            increment,
-                            pre_release,
-                            build: build.as_deref(),
-                            hooks_config: hook_profile.as_deref(),
-                            annotated,
-                            dry_run,
-                            skip_ci,
-                            skip_ci_override,
-                            skip_untracked,
-                            disable_bump_commit,
-                        };
-
-                        cocogitto.create_package_version(opts)?
-                    }
-                    None => {
-                        let opts = BumpOptions {
-                            increment,
-                            pre_release,
-                            build: build.as_deref(),
-                            hooks_config: hook_profile.as_deref(),
-                            annotated,
-                            dry_run,
-                            skip_ci,
-                            skip_ci_override,
-                            skip_untracked,
-                            disable_bump_commit,
-                            include_packages,
-                        };
-
-                        cocogitto.create_monorepo_version(opts)?
-                    }
-                }
+            if is_monorepo && package.is_none() {
+                cocogitto.create_monorepo_version(opts)?
             } else {
-                let opts = BumpOptions {
-                    increment,
-                    pre_release,
-                    build: build.as_deref(),
-                    hooks_config: hook_profile.as_deref(),
-                    annotated,
-                    dry_run,
-                    skip_ci,
-                    skip_ci_override,
-                    skip_untracked,
-                    disable_bump_commit,
-                    include_packages,
-                };
                 cocogitto.create_version(opts)?
             }
         }

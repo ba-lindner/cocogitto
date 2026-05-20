@@ -1,6 +1,5 @@
 use crate::command::bump::BumpOptions;
 use crate::settings::HookType;
-use crate::target::Target;
 use crate::CocoGitto;
 use anyhow::Result;
 use colored::*;
@@ -10,9 +9,7 @@ impl CocoGitto {
     pub fn create_version(&mut self, opts: BumpOptions) -> Result<()> {
         self.pre_bump_checks(opts.skip_untracked)?;
 
-        let target = Target::Standard;
-
-        let bump_res = self.get_new_version(&opts, None, false, None)?;
+        let bump_res = self.get_new_version(&opts, false, None)?;
         if bump_res.no_change() {
             print!("No conventional commits for your repository that required a bump. Changelogs will be updated on the next bump.\nPre-Hooks and Post-Hooks have been skipped.\n");
             return Ok(());
@@ -23,25 +20,15 @@ impl CocoGitto {
             return Ok(());
         }
 
-        self.render_changelog(&bump_res, target, None)?;
+        self.render_changelog(&bump_res, None)?;
 
-        self.run_hooks(
-            Some(&bump_res),
-            target,
-            HookType::PreBump,
-            opts.hooks_config,
-        )?;
+        self.run_hooks(Some(&bump_res), HookType::PreBump, opts.hooks_config)?;
 
         self.create_bump_commit(&opts, &bump_res.next)?;
 
         self.create_bump_tag(&bump_res, opts.annotated.as_deref())?;
 
-        self.run_hooks(
-            Some(&bump_res),
-            target,
-            HookType::PostBump,
-            opts.hooks_config,
-        )?;
+        self.run_hooks(Some(&bump_res), HookType::PostBump, opts.hooks_config)?;
 
         let bump = format!("{} -> {}", bump_res.current, bump_res.next).green();
         info!("Bumped version: {}", bump);

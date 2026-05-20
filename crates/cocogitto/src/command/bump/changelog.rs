@@ -59,14 +59,13 @@ impl CocoGitto {
     pub(super) fn render_changelog(
         &self,
         bump: &BumpResult,
-        target: Target,
         packages: Option<Vec<PackageBumpContext<'_>>>,
     ) -> Result<()> {
         if SETTINGS.disable_changelog {
             return Ok(());
         }
 
-        let (template, kind, path) = match target {
+        let (template, kind, path) = match bump.target {
             Target::Standard => (
                 SETTINGS.get_changelog_template()?,
                 ReleaseType::Standard,
@@ -88,7 +87,7 @@ impl CocoGitto {
         };
 
         let changelog =
-            self.get_changelog_with_target_version(target, &bump.current, &bump.next)?;
+            self.get_changelog_with_target_version(bump.target, &bump.current, &bump.next)?;
 
         changelog.pretty_print_bump_summary()?;
 

@@ -16,11 +16,10 @@ impl CocoGitto {
     pub(super) fn run_hooks(
         &mut self,
         bump: Option<&BumpResult>,
-        target: Target,
         hook_type: HookType,
         hook_profile: Option<&str>,
     ) -> Result<()> {
-        let hook_result = self.run_hooks_impl(bump, target, hook_type, hook_profile);
+        let hook_result = self.run_hooks_impl(bump, hook_type, hook_profile);
 
         if let HookType::PostBump = hook_type {
             return hook_result;
@@ -49,13 +48,13 @@ impl CocoGitto {
     fn run_hooks_impl(
         &self,
         bump: Option<&BumpResult>,
-        target: Target,
         hook_type: HookType,
         hook_profile: Option<&str>,
     ) -> Result<()> {
         let settings = Settings::get(&self.repository)?;
 
-        let package = if let Target::Package { name, package } = target {
+        let package = if let Some(Target::Package { name, package }) = bump.map(|bump| bump.target)
+        {
             Some((name, package))
         } else {
             None

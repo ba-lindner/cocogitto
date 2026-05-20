@@ -1,7 +1,9 @@
+use crate::conventional::version::Increment;
 use crate::conventional::version::IncrementCommand;
 use crate::conventional::version::PreCommand;
 use crate::git::tag::Tag;
-use crate::settings::{MonoRepoPackage, Settings};
+use crate::settings::Settings;
+use crate::target::Target;
 use crate::{CocoGitto, SETTINGS};
 use anyhow::ensure;
 use anyhow::Result;
@@ -17,8 +19,9 @@ mod package;
 mod standard;
 mod version;
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct BumpOptions<'a> {
+    pub target: Target,
     pub increment: IncrementCommand,
     pub pre_release: Option<PreCommand<'a>>,
     pub build: Option<&'a str>,
@@ -32,24 +35,9 @@ pub struct BumpOptions<'a> {
     pub include_packages: bool,
 }
 
-#[derive(Default)]
-pub struct PackageBumpOptions<'a> {
-    pub package_name: &'a str,
-    pub package: &'a MonoRepoPackage,
-    pub increment: IncrementCommand,
-    pub pre_release: Option<PreCommand<'a>>,
-    pub build: Option<&'a str>,
-    pub hooks_config: Option<&'a str>,
-    pub annotated: Option<String>,
-    pub dry_run: bool,
-    pub skip_ci: bool,
-    pub skip_ci_override: Option<String>,
-    pub skip_untracked: bool,
-    pub disable_bump_commit: bool,
-}
-
 #[derive(Debug)]
 struct BumpResult {
+    target: Target,
     current: Tag,
     next: Tag,
     had_commits: bool,
@@ -59,23 +47,11 @@ impl BumpResult {
     fn no_change(&self) -> bool {
         self.current.version == self.next.version
     }
-}
 
-impl<'a> PackageBumpOptions<'a> {
-    fn common(&self) -> BumpOptions<'a> {
-        BumpOptions {
-            increment: self.increment.clone(),
-            pre_release: self.pre_release.clone(),
-            build: self.build,
-            hooks_config: self.hooks_config,
-            annotated: self.annotated.clone(),
-            dry_run: self.dry_run,
-            skip_ci: self.skip_ci,
-            skip_ci_override: self.skip_ci_override.clone(),
-            skip_untracked: self.skip_untracked,
-            disable_bump_commit: self.disable_bump_commit,
-            include_packages: false,
-        }
+    fn increment(&self) -> Increment {
+        self.next
+            .get_increment_from(&self.current)
+            .unwrap_or(Increment::NoBump)
     }
 }
 

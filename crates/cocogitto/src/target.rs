@@ -3,9 +3,10 @@ use crate::{settings::MonoRepoPackage, SETTINGS};
 /// The target of a cocogitto execution
 ///
 /// mainly used for bumping and changelogs
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub enum Target {
     /// The non-monorepo target
+    #[default]
     Standard,
     /// A single package
     Package {

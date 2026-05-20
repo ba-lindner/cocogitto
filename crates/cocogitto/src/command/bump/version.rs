@@ -4,7 +4,7 @@ use semver::{BuildMetadata, Prerelease, Version};
 
 use super::{BumpOptions, BumpResult};
 use crate::conventional::error::BumpError as ConvBumpError;
-use crate::conventional::version::{IncrementCommand, PreCommand};
+use crate::conventional::version::{Increment, PreCommand};
 use crate::git::error::TagError;
 use crate::git::tag::Tag;
 use crate::CocoGitto;
@@ -13,27 +13,30 @@ impl CocoGitto {
     pub(super) fn get_new_version(
         &self,
         opts: &BumpOptions<'_>,
-        package: Option<&str>,
         allow_empty: bool,
-        increment: Option<IncrementCommand>,
+        increment: Option<Increment>,
     ) -> Result<BumpResult> {
-        let current = match self.repository.get_latest_tag(package, false) {
+        let current = match self
+            .repository
+            .get_latest_tag(opts.target.as_package(), false)
+        {
             Ok(tag) => tag,
             Err(TagError::NoTag) => Tag::default(),
             Err(other) => bail!(other),
         };
         let current_prerelease = self
             .repository
-            .get_latest_tag(package, true)
+            .get_latest_tag(opts.target.as_package(), true)
             .ok()
             .filter(|tag| *tag > current);
 
-        let increment = increment.unwrap_or_else(|| opts.increment.clone());
-        let (mut next, had_commits) = match current.bump(increment, &self.repository) {
-            Ok(tag) => (tag, true),
-            Err(ConvBumpError::NoCommitFound) if allow_empty => (current.strip_metadata(), false),
+        let increment = opts.increment.as_strategy(opts.target, increment);
+        let (version, had_commits) = match current.bump(increment, &self.repository) {
+            Ok(version) => (version, true),
+            Err(ConvBumpError::NoCommitFound) if allow_empty => (current.version.clone(), false),
             Err(other) => bail!(other),
         };
+        let mut next = Tag::create(version, opts.target.as_package().map(ToString::to_string));
 
         // if prerelease exists, ensure the new tag is not smaller
         if let Some(pre_release) = &current_prerelease {
@@ -71,9 +74,8 @@ impl CocoGitto {
             );
         }
 
-        next.package = package.map(ToString::to_string);
-
         Ok(BumpResult {
+            target: opts.target,
             current,
             next,
             had_commits,
