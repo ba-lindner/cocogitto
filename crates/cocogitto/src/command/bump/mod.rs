@@ -1,22 +1,25 @@
+use crate::conventional::changelog::context::PackageBumpContext;
 use crate::conventional::version::Increment;
 use crate::conventional::version::IncrementCommand;
 use crate::conventional::version::PreCommand;
+use crate::git::error::TagError;
 use crate::git::tag::Tag;
+use crate::settings::HookType;
 use crate::settings::Settings;
 use crate::target::Target;
 use crate::{CocoGitto, SETTINGS};
+use anyhow::bail;
 use anyhow::ensure;
 use anyhow::Result;
 use colored::Colorize;
 use globset::Glob;
+use log::info;
 use log::warn;
 use std::default::Default;
 
 mod changelog;
 mod hook;
 mod monorepo;
-mod package;
-mod standard;
 mod version;
 
 #[derive(Default, Clone)]
@@ -40,7 +43,6 @@ struct BumpResult {
     target: Target,
     current: Tag,
     next: Tag,
-    had_commits: bool,
 }
 
 impl BumpResult {
@@ -56,6 +58,59 @@ impl BumpResult {
 }
 
 impl CocoGitto {
+    pub fn create_version(&mut self, opts: BumpOptions) -> Result<()> {
+        if (opts.target == Target::Monorepo { manual: false }) {
+            self.create_monorepo_version(opts)
+        } else {
+            // standard, package and monorepo manual are all identical
+            self.create_single_version(opts)
+        }
+    }
+
+    fn create_single_version(&mut self, opts: BumpOptions) -> Result<()> {
+        self.pre_bump_checks(opts.skip_untracked)?;
+
+        let bump_res = self.get_new_version(&opts, false, None)?;
+        if bump_res.no_change() {
+            print!("No conventional commits for your repository that required a bump. Changelogs will be updated on the next bump.\nPre-Hooks and Post-Hooks have been skipped.\n");
+            return Ok(());
+        }
+
+        if opts.dry_run {
+            print!("{}", bump_res.next);
+            return Ok(());
+        }
+
+        let mut template_context = vec![];
+        for (name, package) in SETTINGS.list_packages() {
+            let tag = match self.repository.get_latest_tag(Some(name), false) {
+                Ok(tag) => tag,
+                Err(TagError::NoTag) => Tag::default(),
+                Err(other) => bail!(other),
+            };
+            template_context.push(PackageBumpContext {
+                package_name: name,
+                package_path: package.path.to_string_lossy().to_string(),
+                version: tag.into(),
+                from: None,
+            });
+        }
+        self.render_changelog(&bump_res, Some(template_context))?;
+
+        self.run_hooks(Some(&bump_res), HookType::PreBump, opts.hooks_config)?;
+
+        self.create_bump_commit(&opts, &bump_res.next)?;
+
+        self.create_bump_tag(&bump_res, opts.annotated.as_deref())?;
+
+        self.run_hooks(Some(&bump_res), HookType::PostBump, opts.hooks_config)?;
+
+        let bump = format!("{} -> {}", bump_res.current, bump_res.next).green();
+        info!("Bumped version: {}", bump);
+
+        Ok(())
+    }
+
     fn pre_bump_checks(&mut self, skip_untracked: bool) -> Result<()> {
         if *SETTINGS == Settings::default() {
             let part1 = "Warning: using".yellow();

@@ -477,13 +477,9 @@ fn main() -> Result<()> {
             include_packages,
         } => {
             let mut cocogitto = CocoGitto::get()?;
-            let is_monorepo = SETTINGS
-                .monorepo
-                .as_ref()
-                .map(|m| !m.packages.is_empty())
-                .unwrap_or(false);
 
-            let target = Target::from_options(package.as_deref(), version.is_some(), false);
+            let target =
+                Target::from_options(package.as_deref(), !(auto || include_packages), false);
 
             let increment = match version {
                 Some(version) => IncrementCommand::Manual(version),
@@ -519,11 +515,7 @@ fn main() -> Result<()> {
                 include_packages,
             };
 
-            if is_monorepo && package.is_none() {
-                cocogitto.create_monorepo_version(opts)?
-            } else {
-                cocogitto.create_version(opts)?
-            }
+            cocogitto.create_version(opts)?
         }
         Command::Verify {
             message,

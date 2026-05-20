@@ -10,6 +10,7 @@ use crate::git::tag::Tag;
 use crate::CocoGitto;
 
 impl CocoGitto {
+    // some of the logic in here might break with build metadata
     pub(super) fn get_new_version(
         &self,
         opts: &BumpOptions<'_>,
@@ -31,9 +32,9 @@ impl CocoGitto {
             .filter(|tag| *tag > current);
 
         let increment = opts.increment.as_strategy(opts.target, increment);
-        let (version, had_commits) = match current.bump(increment, &self.repository) {
-            Ok(version) => (version, true),
-            Err(ConvBumpError::NoCommitFound) if allow_empty => (current.version.clone(), false),
+        let version = match current.bump(increment, &self.repository) {
+            Ok(version) => version,
+            Err(ConvBumpError::NoCommitFound) if allow_empty => current.version.clone(),
             Err(other) => bail!(other),
         };
         let mut next = Tag::create(version, opts.target.as_package().map(ToString::to_string));
@@ -78,7 +79,6 @@ impl CocoGitto {
             target: opts.target,
             current,
             next,
-            had_commits,
         })
     }
 }
