@@ -138,3 +138,12 @@ impl<'repo> IntoIterator for CommitIter<'repo> {
         self.commits.into_iter()
     }
 }
+
+impl<'a, 'repo> IntoIterator for &'a CommitIter<'repo> {
+    type Item = &'a (CommitInfo, Commit<'repo>);
+    type IntoIter = std::slice::Iter<'a, (CommitInfo, Commit<'repo>)>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.commits.iter()
+    }
+}

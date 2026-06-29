@@ -30,6 +30,7 @@ impl<'a> ReleaseFixture {
                     .unwrap(),
                 commits: vec![],
                 previous: None,
+                packages: Vec::new(),
             },
         }
     }

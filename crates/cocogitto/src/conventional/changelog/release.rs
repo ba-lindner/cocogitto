@@ -2,10 +2,14 @@ use chrono::{NaiveDateTime, Utc};
 use conventional_commit_parser::commit::{Footer, Separator};
 use serde::Serialize;
 
+use crate::conventional::changelog::context::PackageBumpContext;
 use crate::conventional::commit::Commit;
 use crate::git::oid::ReleaseVersion;
+use crate::git::repository::Repository;
+use crate::git::rev::revspec::RevSpecPattern2;
 use crate::git::rev::CommitIter;
-use crate::settings;
+use crate::git::tag::Tag;
+use crate::{settings, SETTINGS};
 use colored::Colorize;
 
 use crate::conventional::changelog::error::ChangelogError;
@@ -18,6 +22,7 @@ pub struct Release {
     pub date: NaiveDateTime,
     pub commits: Vec<ChangelogCommit>,
     pub previous: Option<Box<Release>>,
+    pub packages: Vec<PackageBumpContext<'static>>,
 }
 
 impl TryFrom<CommitIter<'_>> for Release {
@@ -30,42 +35,75 @@ impl TryFrom<CommitIter<'_>> for Release {
 
         for release in releases {
             let (from, version) = release.version_range();
-            let date = chrono::DateTime::from_timestamp(
-                release.iter_commits().next().unwrap().time().seconds(),
-                0,
-            )
-            .unwrap_or_else(Utc::now)
-            .naive_utc();
+            let date = release
+                .iter_commits()
+                .next()
+                .and_then(|commit| chrono::DateTime::from_timestamp(commit.time().seconds(), 0))
+                .unwrap_or_else(Utc::now)
+                .naive_utc();
             let next = Release {
                 version,
                 from,
                 date,
                 commits: release
                     .ignore_commits_by_settings()
-                    .into_iter()
-                    .filter(|(_commit, commit)| commit.message().is_some())
-                    .filter_map(|(_, commit)| match Commit::from_git_commit(&commit) {
-                        Ok(commit) => {
-                            if !commit.should_omit() {
-                                Some(ChangelogCommit::from(commit))
-                            } else {
-                                None
-                            }
-                        }
-                        Err(err) => {
-                            let err = err.to_string().red();
-                            warn!("{}", err);
-                            None
-                        }
+                    .iter_commits()
+                    .filter(|commit| commit.message().is_some())
+                    .filter_map(|commit| {
+                        Commit::from_git_commit(commit)
+                            .inspect_err(|err| warn!("{}", err.to_string().red()))
+                            .ok()
                     })
+                    .filter(|commit| !commit.should_omit())
+                    .map(ChangelogCommit::from)
                     .collect(),
                 previous: current.map(Box::new),
+                packages: Vec::new(),
             };
 
             current = Some(next);
         }
 
         current.ok_or(ChangelogError::EmptyRelease)
+    }
+}
+
+impl Release {
+    pub(crate) fn add_package_bumps(&mut self, repository: &Repository) -> anyhow::Result<()> {
+        let oid = |version: &ReleaseVersion| Some(version.id).filter(|oid| !oid.is_zero());
+        let commits = repository.revwalk(RevSpecPattern2 {
+            from: oid(&self.from),
+            to: oid(&self.version),
+        })?;
+        for (name, package) in SETTINGS.list_packages() {
+            if !package.public_api {
+                continue;
+            }
+            let mut tags = None::<(&Tag, &Tag)>;
+            for (info, _) in &commits {
+                let tag = info
+                    .tags
+                    .iter()
+                    .find(|tag| tag.package.as_ref() == Some(name));
+                let (new, old) = tags.unzip();
+                tags = new.or(tag).zip(tag.or(old));
+            }
+            let Some((new, old)) = tags else {
+                continue;
+            };
+            let mut from = repository.get_previous_tag(old).unwrap_or_default();
+            from.package = Some(name.clone());
+            self.packages.push(PackageBumpContext {
+                package_name: name,
+                package_path: package.path.to_string_lossy().to_string(),
+                version: new.clone().into(),
+                from: Some(from.into()),
+            });
+        }
+        if let Some(previous) = &mut self.previous {
+            previous.add_package_bumps(repository)?;
+        }
+        Ok(())
     }
 }
 

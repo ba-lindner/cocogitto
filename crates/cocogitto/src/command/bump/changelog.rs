@@ -50,6 +50,7 @@ impl CocoGitto {
                 date: Default::default(),
                 commits: vec![],
                 previous: None,
+                packages: Vec::new(),
             },
             Err(why) => bail!(why),
         };
