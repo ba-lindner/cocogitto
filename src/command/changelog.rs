@@ -17,10 +17,7 @@ impl CocoGitto {
         Ok(Release::build(commit_range, CommitRangeFilter::None))
     }
 
-    pub fn get_monorepo_changelog(
-        &self,
-        pattern: &str,
-    ) -> Result<(Vec<Release>, MonoRepoContext<'_>)> {
+    pub fn get_monorepo_changelog(&self, pattern: &str) -> Result<(Vec<Release>, MonoRepoContext)> {
         let mut packages = Vec::new();
 
         let spec = RevSpec::parse(pattern, &self.repository)?;
@@ -68,7 +65,7 @@ impl CocoGitto {
         }
         let context = MonoRepoContext {
             package_lock: false,
-            packages,
+            // packages,
         };
 
         let range = range.global()?;

@@ -14,13 +14,6 @@ use anyhow::Result;
 
 use log::{info, warn};
 
-#[derive(Debug)]
-pub struct PackageData<'n> {
-    pub package_name: &'n str,
-    pub package_path: String,
-    pub version: Tag,
-}
-
 impl CocoGitto {
     pub fn create_monorepo_version(&mut self, opts: BumpOptions) -> Result<()> {
         match opts.increment {
@@ -106,7 +99,7 @@ impl CocoGitto {
         } else {
             IncrementCommand::Auto
         };
-        let global_bump =
+        let mut global_bump =
             self.get_next_version(&opts, CommitRangeFilter::Global, Some(&mut cache), true)?;
         drop(cache);
 
@@ -118,9 +111,9 @@ impl CocoGitto {
             return Ok(());
         }
 
-        let mut template_context = vec![];
-        for bump in &bumps {
-            template_context.push(PackageBumpContext {
+        global_bump.release.packages = bumps
+            .iter()
+            .map(|bump| PackageBumpContext {
                 package_name: bump.package.0,
                 package_path: bump.package.1.path.display().to_string(),
                 version: bump.next.clone().into(),
@@ -130,13 +123,16 @@ impl CocoGitto {
                     bump.current.clone().into()
                 }),
             })
-        }
+            .collect();
+        global_bump
+            .release
+            .packages
+            .sort_by_key(|release| release.package_name);
 
         self.render_changelog(
             &global_bump,
             MonoRepoContext {
                 package_lock: false,
-                packages: template_context,
             },
         )?;
 
@@ -167,33 +163,20 @@ impl CocoGitto {
 
     fn create_monorepo_version_manual(&mut self, opts: BumpOptions) -> Result<()> {
         self.pre_bump_checks(opts.skip_untracked)?;
-        // Get package bumps
-        let bumps = self.get_current_packages()?;
 
-        let bump = self.get_next_version(&opts, CommitRangeFilter::Global, None, false)?;
+        let mut bump = self.get_next_version(&opts, CommitRangeFilter::Global, None, false)?;
 
         if opts.dry_run {
             print!("{}", bump.next);
             return Ok(());
         }
 
-        let mut template_context = vec![];
-        for bump in bumps {
-            template_context.push(PackageBumpContext {
-                package_name: bump.package_name,
-                package_path: bump.package_path,
-                version: bump.version.into(),
-                from: None,
-            })
-        }
+        bump.release.packages = self.get_current_packages()?;
+        bump.release
+            .packages
+            .sort_by_key(|release| release.package_name);
 
-        self.render_changelog(
-            &bump,
-            MonoRepoContext {
-                package_lock: true,
-                packages: template_context,
-            },
-        )?;
+        self.render_changelog(&bump, MonoRepoContext { package_lock: true })?;
 
         self.run_hooks(HookType::PreBump, &bump, opts.hooks_config)?;
 
@@ -207,17 +190,18 @@ impl CocoGitto {
         Ok(())
     }
 
-    pub fn get_current_packages(&self) -> Result<Vec<PackageData<'static>>> {
+    pub fn get_current_packages(&self) -> Result<Vec<PackageBumpContext<'static>>> {
         let mut packages = vec![];
         for (package_name, package) in SETTINGS.packages.iter() {
             let tag = self
                 .repository
                 .get_latest_tag(Some(package_name), false)
                 .unwrap_or_default();
-            packages.push(PackageData {
+            packages.push(PackageBumpContext {
                 package_name,
                 package_path: package.path.to_string_lossy().to_string(),
-                version: tag,
+                version: tag.into(),
+                from: None,
             })
         }
 

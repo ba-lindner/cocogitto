@@ -79,9 +79,8 @@ pub struct RemoteContext {
 }
 
 #[derive(Debug, Serialize)]
-pub struct MonoRepoContext<'a> {
+pub struct MonoRepoContext {
     pub package_lock: bool,
-    pub packages: Vec<PackageBumpContext<'a>>,
 }
 
 #[derive(Debug, Serialize)]
