@@ -184,6 +184,18 @@ impl Commit {
         commit_config.bump_patch()
     }
 
+    pub(crate) fn is_any_bump(&self) -> bool {
+        if self.conventional.is_breaking_change {
+            return true;
+        }
+
+        let Some(commit_config) = COMMITS_METADATA.get(&self.conventional.commit_type) else {
+            return false;
+        };
+
+        commit_config.bump_minor() || commit_config.bump_patch()
+    }
+
     pub fn get_log(&self) -> String {
         let summary = &self.conventional.summary;
         let message_display = Commit::short_summary_from_str(summary).yellow();

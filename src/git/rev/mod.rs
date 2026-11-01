@@ -1,4 +1,5 @@
 use git2::Commit;
+use itertools::Itertools;
 
 use crate::git::oid::OidOf;
 
@@ -8,7 +9,7 @@ pub mod revspec;
 pub mod revwalk;
 
 #[derive(Debug)]
-pub struct CommitIter<'repo>(Vec<(OidOf, Commit<'repo>)>);
+pub struct CommitIter<'repo>(pub(crate) Vec<(OidOf, Commit<'repo>)>);
 
 impl CommitIter<'_> {
     pub fn from_oid(&self) -> OidOf {
@@ -21,6 +22,21 @@ impl CommitIter<'_> {
 
     pub fn iter_commits(&self) -> impl Iterator<Item = &Commit> {
         self.0.iter().map(|(_, commit)| commit)
+    }
+
+    pub fn try_retain<E>(
+        &mut self,
+        f: impl Fn(&OidOf, &Commit<'_>) -> Result<bool, E>,
+    ) -> Result<(), E> {
+        let filter: Vec<_> = self
+            .0
+            .iter()
+            .map(|(oid, commit)| f(oid, commit))
+            .try_collect()?;
+        assert_eq!(filter.len(), self.0.len());
+        let mut filter = filter.into_iter();
+        self.0.retain(|_| filter.next().unwrap());
+        Ok(())
     }
 }
 

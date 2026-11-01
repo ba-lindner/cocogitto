@@ -8,7 +8,7 @@ use crate::git::tag::Tag;
 use crate::hook::{Hook, HookVersion, Hooks};
 use crate::settings::{HookType, MonoRepoPackage, Settings};
 use crate::BumpError;
-use crate::{CocoGitto, COMMITS_METADATA, SETTINGS};
+use crate::{CocoGitto, SETTINGS};
 use anyhow::Result;
 use anyhow::{anyhow, bail, ensure, Context};
 use colored::Colorize;
@@ -134,7 +134,7 @@ fn ensure_tag_is_greater_than_previous(current: &Tag, next: &Tag) -> Result<()> 
 
 fn tag_or_fallback_to_zero(tag: Result<Tag, TagError>) -> Result<Tag> {
     match tag {
-        Ok(ref tag) => Ok(tag.clone()),
+        Ok(tag) => Ok(tag),
         Err(TagError::NoTag) => Ok(Tag::default()),
         Err(err) => Err(anyhow!(err)),
     }
@@ -356,29 +356,12 @@ impl Release<'_> {
             .map(|ch_commit| &ch_commit.commit)
             .collect();
 
-        // Commits which type are neither feat, fix nor breaking changes
-        // won't affect the version number.
-        let mut non_bump_commits: Vec<&CommitType> = conventional_commits
+        let non_bump_commits: Vec<_> = conventional_commits
             .iter()
-            .filter_map(|commit: &&Commit| {
-                let commit_config = COMMITS_METADATA.get(&commit.conventional.commit_type);
-                match commit_config {
-                    Some(commit_config)
-                        if commit_config.bump_minor() || commit_config.bump_patch() =>
-                    {
-                        None
-                    }
-                    _ if commit.conventional.is_breaking_change => None,
-                    _ => Some(&commit.conventional.commit_type),
-                }
-            })
-            .collect();
-
-        non_bump_commits.sort();
-
-        let non_bump_commits: Vec<(usize, &CommitType)> = non_bump_commits
-            .into_iter()
-            .dedup_by_with_count(|c1, c2| c1 == c2)
+            .filter(|commit| !commit.is_any_bump())
+            .map(|commit: &&Commit| &commit.conventional.commit_type)
+            .sorted()
+            .dedup_with_count()
             .collect();
 
         if !non_bump_commits.is_empty() {
@@ -390,30 +373,25 @@ impl Release<'_> {
             info!("{}", skip_message);
         }
 
-        let bump_commits =
-            conventional_commits
-                .iter()
-                .filter(|commit| match &commit.conventional.commit_type {
-                    CommitType::Feature | CommitType::BugFix => true,
-                    _commit_type if commit.conventional.is_breaking_change => true,
-                    _ => false,
-                });
+        let bump_commits = conventional_commits
+            .iter()
+            .filter(|commit| commit.is_any_bump());
 
         for commit in bump_commits {
-            match &commit.conventional.commit_type {
-                _commit_type if commit.conventional.is_breaking_change => {
-                    info!(
-                        "\t Found {} commit {} with type: {}",
-                        "BREAKING CHANGE".red(),
-                        commit.shorthand().blue(),
-                        commit.conventional.commit_type.as_ref().yellow()
-                    )
-                }
-                CommitType::Feature => {
-                    info!("\tFound feature commit {}", commit.shorthand().blue())
-                }
-                CommitType::BugFix => info!("\tFound bug fix commit {}", commit.shorthand().blue()),
-                _ => (),
+            let commit_type = match &commit.conventional.commit_type {
+                CommitType::Feature => "feature",
+                CommitType::BugFix => "bug fix",
+                other => other.as_ref(),
+            };
+            let short = commit.shorthand().blue();
+            if commit.conventional.is_breaking_change {
+                info!(
+                    "\t Found {} commit {short} with type: {}",
+                    "BREAKING CHANGE".red(),
+                    commit_type.yellow()
+                );
+            } else {
+                info!("\tFound {commit_type} commit {short}");
             }
         }
 
