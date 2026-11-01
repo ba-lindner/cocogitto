@@ -182,27 +182,6 @@ impl CocoGitto {
         }
     }
 
-    pub fn unwrap_or_stash_and_exit<T>(&mut self, tag: &Tag, result: Result<T>) -> T {
-        match result {
-            Ok(res) => res,
-            Err(err) => {
-                self.repository
-                    .stash_failed_version(tag.clone())
-                    .expect("stash");
-                error!(
-                    "{}",
-                    BumpError {
-                        cause: err.to_string(),
-                        version: tag.to_string(),
-                        stash_number: 0,
-                    }
-                );
-
-                exit(1);
-            }
-        }
-    }
-
     fn pre_bump_checks(&mut self, skip_untracked: bool) -> Result<()> {
         if *SETTINGS == Settings::default() {
             let part1 = "Warning: using".yellow();
@@ -303,73 +282,90 @@ impl CocoGitto {
     }
 
     fn run_hooks<P: MaybePkg>(
-        &self,
+        &mut self,
         bump: Option<&BumpResult<P>>,
         hook_type: HookType,
         hook_profile: Option<&str>,
     ) -> Result<()> {
-        let settings = Settings::get(&self.repository)?;
+        // wrap actual hook ecexution in immediately executed closure
+        // so that changes can be stashed if pre-bump hooks fail
+        let hook_result = (|| -> Result<()> {
+            let settings = Settings::get(&self.repository)?;
 
-        let (package_name, package) = bump.and_then(|bump| bump.package.maybe_pkg()).unzip();
-        let (hook_src, package_hint) = package_name
-            .zip(package)
-            .map(|(name, package)| (package as &dyn Hooks, format!(" for package {name}")))
-            .unwrap_or((&settings, String::new()));
+            let package = bump.and_then(|bump| bump.package.maybe_pkg());
+            let (hook_src, package_hint) = package
+                .map(|(name, package)| (package as &dyn Hooks, format!(" for package {name}")))
+                .unwrap_or((&settings, String::new()));
 
-        let (raw_hooks, profile_hint) = if let Some(profile) = hook_profile {
-            (
-                hook_src.get_profile_hooks(profile, hook_type),
-                format!(" bump profile {profile}"),
-            )
-        } else {
-            (hook_src.get_hooks(hook_type), String::new())
-        };
+            let (raw_hooks, profile_hint) = if let Some(profile) = hook_profile {
+                (
+                    hook_src.get_profile_hooks(profile, hook_type),
+                    format!(" bump profile {profile}"),
+                )
+            } else {
+                (hook_src.get_hooks(hook_type), String::new())
+            };
 
-        let hooks: Vec<Hook> = raw_hooks
-            .iter()
-            .enumerate()
-            .map(|(idx, s)| {
-                s.parse().with_context(|| {
-                    format!("Cannot parse{profile_hint} hook{package_hint} at index {idx}")
+            let hooks: Vec<Hook> = raw_hooks
+                .iter()
+                .enumerate()
+                .map(|(idx, s)| {
+                    s.parse().with_context(|| {
+                        format!("Cannot parse{profile_hint} hook{package_hint} at index {idx}")
+                    })
                 })
-            })
-            .try_collect()?;
+                .try_collect()?;
 
-        if !hooks.is_empty() {
-            let hook_type = match hook_type {
-                HookType::PreBump => "pre-bump",
-                HookType::PostBump => "post-bump",
-            };
+            if !hooks.is_empty() {
+                let hook_type = match hook_type {
+                    HookType::PreBump => "pre-bump",
+                    HookType::PostBump => "post-bump",
+                };
 
-            match package_name {
-                None => {
-                    let msg = format!("[{hook_type}]").underline().white().bold();
-                    info!("{msg}")
-                }
-                Some(package_name) => {
-                    let msg = format!("[{hook_type}-{package_name}]")
-                        .underline()
-                        .white()
-                        .bold();
-                    info!("{msg}")
-                }
+                let msg = package
+                    .map(|(name, _)| format!("[{hook_type}-{name}]"))
+                    .unwrap_or_else(|| format!("[{hook_type}]"));
+                info!("{}", msg.underline().white().bold());
             }
-        }
 
-        for hook in hooks {
-            let command = if let Some(bump) = bump {
-                hook.insert_versions(Some(&bump.current), Some(&bump.next))?
-            } else {
-                hook.insert_versions(None, None)?
-            };
-            if command.chars().count() > 78 {
-                info!("[{}...]", &command[0..78]);
-            } else {
-                info!("[{}]", &*command);
-            };
-            let package_path = package.map(|p| p.path.as_path());
-            command.run(package_path).with_context(|| command.clone())?;
-            println!();
+            for hook in hooks {
+                let command = if let Some(bump) = bump {
+                    hook.insert_versions(Some(&bump.current), Some(&bump.next))?
+                } else {
+                    hook.insert_versions(None, None)?
+                };
+                if command.chars().count() > 78 {
+                    info!("[{}...]", &command[0..78]);
+                } else {
+                    info!("[{}]", &*command);
+                };
+                let package_path = package.map(|(_, p)| p.path.as_path());
+                command.run(package_path).with_context(|| command.clone())?;
+                println!();
+            }
+
+            Ok(())
+        })();
+
+        if hook_type == HookType::PostBump {
+            return hook_result;
+        }
+        self.repository.add_all()?;
+        if let Err(err) = hook_result {
+            let tag = bump.map(|bump| bump.next.clone()).unwrap_or_default();
+            error!(
+                "{}",
+                BumpError {
+                    cause: err.to_string(),
+                    version: tag.to_string(),
+                    stash_number: 0,
+                }
+            );
+            self.repository
+                .stash_failed_version(tag)
+                .expect("failed to stash bump hook changes");
+
+            exit(1);
         }
 
         Ok(())

@@ -2,7 +2,6 @@ use crate::command::bump::BumpOptions;
 
 use crate::conventional::changelog::ReleaseType;
 
-use crate::git::tag::Tag;
 use crate::settings::HookType;
 use crate::{settings, CocoGitto, SETTINGS};
 use anyhow::Result;
@@ -38,10 +37,7 @@ impl CocoGitto {
             changelog.write_to_file(path, template, ReleaseType::Standard)?;
         }
 
-        let hook_result = self.run_hooks(Some(&bump_res), HookType::PreBump, opts.hooks_config);
-
-        self.repository.add_all()?;
-        self.unwrap_or_stash_and_exit(&Tag::default(), hook_result);
+        self.run_hooks(Some(&bump_res), HookType::PreBump, opts.hooks_config)?;
 
         let disable_bump_commit = opts.disable_bump_commit || SETTINGS.disable_bump_commit;
 

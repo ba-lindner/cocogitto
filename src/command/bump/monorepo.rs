@@ -62,14 +62,10 @@ impl CocoGitto {
             return Ok(());
         }
 
-        let hook_result = self.run_hooks(None::<&BumpResult>, HookType::PreBump, opts.hooks_config);
-
-        let disable_bump_commit = opts.disable_bump_commit || SETTINGS.disable_bump_commit;
-
-        self.repository.add_all()?;
-        self.unwrap_or_stash_and_exit(&Tag::default(), hook_result);
+        self.run_hooks(None::<&BumpResult>, HookType::PreBump, opts.hooks_config)?;
         self.bump_packages(opts.hooks_config, &bumps)?;
 
+        let disable_bump_commit = opts.disable_bump_commit || SETTINGS.disable_bump_commit;
         if !disable_bump_commit {
             let sign = self.repository.gpg_sign();
             if opts.skip_ci || opts.skip_ci_override.is_some() {
@@ -179,10 +175,7 @@ impl CocoGitto {
             )?;
         }
 
-        let hook_result = self.run_hooks(Some(&bump_res), HookType::PreBump, opts.hooks_config);
-
-        self.repository.add_all()?;
-        self.unwrap_or_stash_and_exit(&bump_res.next, hook_result);
+        self.run_hooks(Some(&bump_res), HookType::PreBump, opts.hooks_config)?;
         self.bump_packages(opts.hooks_config, &bumps)?;
 
         let disable_bump_commit = opts.disable_bump_commit || SETTINGS.disable_bump_commit;
@@ -281,10 +274,7 @@ impl CocoGitto {
             )?;
         }
 
-        let hook_result = self.run_hooks(Some(&bump_res), HookType::PreBump, opts.hooks_config);
-
-        self.repository.add_all()?;
-        self.unwrap_or_stash_and_exit(&Tag::default(), hook_result);
+        self.run_hooks(Some(&bump_res), HookType::PreBump, opts.hooks_config)?;
 
         let disable_bump_commit = opts.disable_bump_commit || SETTINGS.disable_bump_commit;
 
@@ -396,10 +386,7 @@ impl CocoGitto {
                 info!("\tChangelog updated {:?}", path);
             }
 
-            let hook_result = self.run_hooks(Some(bump), HookType::PreBump, hooks_config);
-
-            self.repository.add_all()?;
-            self.unwrap_or_stash_and_exit(&bump.next, hook_result);
+            self.run_hooks(Some(bump), HookType::PreBump, hooks_config)?;
         }
 
         Ok(())
