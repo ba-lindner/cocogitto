@@ -4,6 +4,7 @@ mod mangen;
 use std::fs;
 use std::path::PathBuf;
 
+use cocogitto::command::Targets;
 use cocogitto::conventional::changelog::template::{RemoteContext, Template};
 use cocogitto::conventional::changelog::ReleaseType;
 use cocogitto::conventional::commit as conv_commit;
@@ -14,14 +15,14 @@ use cocogitto::log::output::Output;
 use cocogitto::{set_config_path, CocoGitto, CommitHook, DEFAULT_CONFIG_PATH, SETTINGS};
 
 use crate::commit::prepare_edit_message;
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use clap::builder::{PossibleValue, PossibleValuesParser};
 use clap::{ArgAction, ArgGroup, Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::{shells, Generator};
 use clap_complete_nushell::Nushell;
 use cocogitto::command::bump::{BumpOptions, PackageBumpOptions};
 use cocogitto::command::commit::CommitOptions;
-use cocogitto::settings::GitHookType;
+use cocogitto::settings::{GitHookType, MonoRepoPackage};
 
 fn hook_profiles() -> PossibleValuesParser {
     let profiles = SETTINGS
@@ -366,7 +367,11 @@ enum Command {
 
     /// Generate manpage
     #[command(hide = true)]
-    GenerateManpages { output_dir: PathBuf },
+    GenerateManpages {
+        output_dir: PathBuf,
+    },
+
+    Target(#[command(flatten)] TargetArgs),
 }
 
 #[derive(Args)]
@@ -408,6 +413,179 @@ struct CommitArgs {
     /// Update but doesn't add files to the commit (similar to git add -u .)
     #[arg(short, long = "update")]
     update_files: bool,
+}
+
+/// Target selection
+///
+/// only available / useful in monorepos,
+/// as otherwise `standard` is the only reasonable target
+#[derive(Args)]
+struct TargetArgs {
+    /// Include global + all packages
+    ///
+    /// Default for bump --auto and changelog --unified
+    #[arg(long, conflicts_with_all = ["global", "package", "all_packages", "packages_if"])]
+    all_targets: bool,
+    /// Global target
+    ///
+    /// Default for manual bumping, get-version and changelog
+    #[arg(long)]
+    global: bool,
+    /// Single package
+    #[arg(short, long)]
+    package: Vec<String>,
+    /// All packages
+    #[arg(long, conflicts_with_all = ["package", "packages_if"])]
+    all_packages: bool,
+    /// Include packages that match the given condition
+    ///
+    /// A condition must be given as <field> <operator> <value>, e.g.
+    /// `public_api=true`
+    #[arg(long)]
+    packages_if: Vec<String>,
+    /// Exclude a package
+    #[arg(long)]
+    exclude: Vec<String>,
+    /// Limit packages to those matching the given condition
+    ///
+    /// Same conditions as with `packages_if` can be used
+    #[arg(long)]
+    filter: Vec<String>,
+}
+
+impl TargetArgs {
+    fn get_targets(self) -> Result<Targets> {
+        // outside monorepo, only `standard` is a valid target
+        if SETTINGS.packages.is_empty() {
+            return Ok(Targets {
+                standard: true,
+                global: false,
+                packages: Vec::new(),
+            });
+        }
+
+        // `exclude` and `filter` don't prevent default
+        let use_default = self.package.is_empty()
+            && self.packages_if.is_empty()
+            && !self.all_targets
+            && !self.global
+            && !self.all_packages;
+
+        let mut res = if use_default {
+            Targets {
+                standard: false,
+                global: true,
+                packages: SETTINGS.packages.keys().cloned().collect(),
+            }
+        } else {
+            Targets {
+                standard: false,
+                global: self.global || self.all_targets,
+                packages: if self.all_packages || self.all_targets {
+                    SETTINGS.packages.keys().cloned().collect()
+                } else {
+                    self.package
+                },
+            }
+        };
+
+        fn parse_filter(
+            mut filter: &str,
+        ) -> Result<Box<dyn Fn(&str, &MonoRepoPackage) -> bool + '_>> {
+            type Operator = (
+                fn(&str, &str) -> bool,
+                Option<fn(&Option<usize>, &Option<usize>) -> bool>,
+                Option<bool>,
+            );
+            const FIELDS: &[(
+                &str,
+                for<'a> fn(
+                    Operator,
+                    &'a str,
+                )
+                    -> Result<Box<dyn Fn(&str, &MonoRepoPackage) -> bool + 'a>>,
+            )] = &[
+                ("name", |op, val| {
+                    Ok(Box::new(move |name, _| (op.0)(name, val)))
+                }),
+                ("path", |op, val| {
+                    Ok(Box::new(move |_, pkg| {
+                        (op.0)(&pkg.path.display().to_string(), val)
+                    }))
+                }),
+                ("changelog_path", |op, val| {
+                    Ok(Box::new(move |_, pkg| {
+                        (op.0)(pkg.changelog_path.as_deref().unwrap_or_default(), val)
+                    }))
+                }),
+                ("public_api", |op, val| {
+                    let expected =
+                        op.2.ok_or(anyhow!("operator not supported for public_api"))?
+                            == val.parse::<bool>()?;
+                    Ok(Box::new(move |_, pkg| pkg.public_api == expected))
+                }),
+                ("bump_order", |op, val| {
+                    let val = if val.is_empty() {
+                        None
+                    } else {
+                        Some(val.parse()?)
+                    };
+                    let cmp =
+                        op.1.ok_or(anyhow!("operator not supported for bump_order"))?;
+                    Ok(Box::new(move |_, pkg| cmp(&pkg.bump_order, &val)))
+                }),
+            ];
+            const OPS: &[(&str, Operator)] = &[
+                ("!~", (|a, b| !a.contains(b), None, None)),
+                ("~", (|a, b| a.contains(b), None, None)),
+                ("=", (str::eq, Some(Option::<usize>::eq), Some(true))),
+                ("!=", (str::ne, Some(Option::<usize>::ne), Some(false))),
+                ("<=", (str::le, Some(Option::<usize>::le), None)),
+                ("<", (str::lt, Some(Option::<usize>::lt), None)),
+                (">=", (str::ge, Some(Option::<usize>::ge), None)),
+                (">", (str::gt, Some(Option::<usize>::gt), None)),
+            ];
+            filter = filter.trim_start();
+            let &(field, field_func) =
+                FIELDS
+                    .iter()
+                    .find(|(field, _)| filter.starts_with(field))
+                    .ok_or(anyhow!("could not find field for package_filter {filter}"))?;
+            filter = filter
+                .strip_prefix(field)
+                .expect("checked in loop")
+                .trim_start();
+            let &(op, op_func) = OPS
+                .iter()
+                .find(|(op, _)| filter.starts_with(op))
+                .ok_or(anyhow!("could not find operator at beginning of {filter}"))?;
+            filter = filter
+                .strip_prefix(op)
+                .expect("checked in loop")
+                .trim_start();
+            field_func(op_func, filter)
+        }
+
+        for filter in &self.packages_if {
+            let filter = parse_filter(filter)?;
+            for (pkg_name, package) in &SETTINGS.packages {
+                if filter(pkg_name, package) {
+                    res.packages.push(pkg_name.clone());
+                }
+            }
+        }
+
+        for filter in &self.filter {
+            let filter = parse_filter(filter)?;
+            res.packages
+                .retain(|pkg| filter(pkg, &SETTINGS.packages[pkg]));
+        }
+
+        res.packages.retain(|pkg| !self.exclude.contains(pkg));
+
+        res.packages.sort();
+        Ok(res)
+    }
 }
 
 /// Loads "--config" argument before loading the full CLI as other CLI commands
@@ -760,6 +938,18 @@ fn main() -> Result<()> {
 
             cocogitto.conventional_commit(opts)?;
             cocogitto.run_commit_hook(CommitHook::PostCommit)?;
+        }
+        Command::Target(targets) => {
+            let targets = targets.get_targets()?;
+            if targets.standard {
+                println!("selected standard");
+            }
+            if targets.global {
+                println!("selected global");
+            }
+            for pkg in &targets.packages {
+                println!("selected package {pkg}");
+            }
         }
     }
 
