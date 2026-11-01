@@ -436,6 +436,93 @@ impl MonoRepoPackage {
     }
 }
 
+/// How to represent Prereleases in Changelogs
+#[cfg_attr(feature = "docgen", derive(cog_schemars::JsonSchema))]
+#[derive(Default, Debug, Deserialize, Serialize, Copy, Clone, Eq, PartialEq)]
+pub enum PrereleaseMode {
+    /// Show all prereleases in changelogs
+    ///
+    /// With this default setting, all prereleases will be present in changelogs.
+    /// This can cause very small entries for full releases, including empty ones
+    /// when doing a full release after a prerelease without commits in between.
+    ///
+    /// Example:
+    ///
+    /// ```text
+    /// # v1.2.0-beta.2
+    ///   - feature 4
+    /// # v1.2.0-beta.1
+    ///   - feature 3
+    /// # v1.1.0
+    /// # v1.1.0-beta.2
+    ///   - feature 2
+    /// # v1.1.0-beta.1
+    ///   - feature 1
+    /// # v1.0.0
+    /// ```
+    #[default]
+    Full,
+    /// Show only unreleased prereleases
+    ///
+    /// With this, only prereleases that are newer than the latest full release
+    /// will be shown in changelogs. When doing a full release, all prerelease
+    /// entries from the changelog will be removed and replaced with the full release.
+    ///
+    /// Example:
+    ///
+    /// ```text
+    /// # v1.2.0-beta.2
+    ///   - feature 4
+    /// # v1.2.0-beta.1
+    ///   - feature 3
+    /// # v1.1.0
+    ///   - feature 2
+    ///   - feature 1
+    /// # v1.0.0
+    /// ```
+    Unreleased,
+    /// Show at most a single prerelease
+    ///
+    /// This is similar to [`Unreleased`](PrereleaseMode::Unreleased), but all
+    /// changes from prereleases will be aggregated into a single entry.
+    ///
+    /// Example:
+    ///
+    /// ```text
+    /// # v1.2.0-beta.2
+    ///   - feature 4
+    ///   - feature 3
+    /// # v1.1.0
+    ///   - feature 2
+    ///   - feature 1
+    /// # v1.0.0
+    /// ```
+    Single,
+    /// Don't show any prereleases
+    ///
+    /// Example:
+    ///
+    /// ```text
+    /// # v1.1.0
+    ///   - feature 2
+    ///   - feature 1
+    /// # v1.0.0
+    /// ```
+    ///
+    /// or
+    ///
+    /// ```text
+    /// # Unreleased
+    ///   - feature 4
+    ///   - feature 3
+    /// # v1.1.0
+    ///   - feature 2
+    ///   - feature 1
+    /// # v1.0.0
+    /// ```
+    Ignore,
+}
+
 /// # Changelog
 /// Configuration for changelog generation.
 ///
@@ -471,6 +558,8 @@ pub struct Changelog {
     pub authors: AuthorSettings,
     /// Omit version commits from changelogs
     pub omit_version_commit: bool,
+    /// Which prereleases to include
+    pub prerelease: PrereleaseMode,
 }
 
 impl Default for Changelog {
@@ -484,6 +573,7 @@ impl Default for Changelog {
             repository: None,
             authors: vec![],
             omit_version_commit: false,
+            prerelease: Default::default(),
         }
     }
 }
