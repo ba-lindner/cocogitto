@@ -14,12 +14,10 @@ impl CocoGitto {
     pub fn create_package_version(&mut self, opts: PackageBumpOptions) -> Result<()> {
         self.pre_bump_checks(opts.skip_untracked)?;
 
-        let bump_res = opts.common().get_new_version(
-            &self.repository,
-            Some(opts.package_name),
-            false,
-            None,
-        )?;
+        let target = Target::package(opts.package_name);
+        let bump_res = opts
+            .common()
+            .get_new_version(&self.repository, target, false, None)?;
         if bump_res.no_change() {
             print!("No conventional commits found for {} that required a bump. Changelog will be updated on the next bump.\nPre-Hooks and Post-Hooks have been skipped.\n", opts.package_name);
             return Ok(());

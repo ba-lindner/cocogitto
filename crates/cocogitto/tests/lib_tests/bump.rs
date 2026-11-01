@@ -5,11 +5,12 @@ use std::path::PathBuf;
 use anyhow::Result;
 use cmd_lib::run_cmd;
 use cmd_lib::run_fun;
+use cocogitto::target::Target;
 use sealed_test::prelude::*;
 use speculoos::prelude::*;
 
 use crate::helpers::*;
-use cocogitto::command::bump::{BumpOptions, PackageBumpOptions};
+use cocogitto::command::bump::BumpOptions;
 use cocogitto::settings::{MonoRepoPackage, MonorepoConfig, Settings};
 use cocogitto::{
     conventional::version::{IncrementCommand, PreCommand},
@@ -168,18 +169,12 @@ fn package_bump_ok() -> Result<()> {
     };
 
     init_monorepo(&mut settings)?;
-    let package = settings
-        .monorepo
-        .as_ref()
-        .and_then(|m| m.packages.get("one"))
-        .unwrap();
     let mut cocogitto = CocoGitto::get()?;
 
     // Act
-    let result = cocogitto.create_package_version(PackageBumpOptions {
-        package_name: "one",
-        package,
-        increment: IncrementCommand::AutoPackage("one".to_string()),
+    let result = cocogitto.create_version(BumpOptions {
+        target: Target::package("one"),
+        increment: IncrementCommand::Auto,
         ..Default::default()
     });
 
@@ -243,19 +238,17 @@ fn consecutive_package_bump_ok() -> Result<()> {
     let mut cocogitto = CocoGitto::get()?;
 
     // Act
-    cocogitto.create_package_version(PackageBumpOptions {
-        package_name: "thumbor",
-        package: &thumbor(),
-        increment: IncrementCommand::AutoPackage("thumbor".to_owned()),
+    cocogitto.create_version(BumpOptions {
+        target: Target::package("thumbor"),
+        increment: IncrementCommand::Auto,
         ..Default::default()
     })?;
 
     cocogitto.clear_cache();
 
-    cocogitto.create_package_version(PackageBumpOptions {
-        package_name: "jenkins",
-        package: &jenkins(),
-        increment: IncrementCommand::AutoPackage("jenkins".to_owned()),
+    cocogitto.create_version(BumpOptions {
+        target: Target::package("jenkins"),
+        increment: IncrementCommand::Auto,
         ..Default::default()
     })?;
 
@@ -267,10 +260,9 @@ fn consecutive_package_bump_ok() -> Result<()> {
 
     cocogitto.clear_cache();
 
-    cocogitto.create_package_version(PackageBumpOptions {
-        package_name: "jenkins",
-        package: &jenkins(),
-        increment: IncrementCommand::AutoPackage("jenkins".to_owned()),
+    cocogitto.create_version(BumpOptions {
+        target: Target::package("jenkins"),
+        increment: IncrementCommand::Auto,
         ..Default::default()
     })?;
 
@@ -285,6 +277,12 @@ fn consecutive_package_bump_ok() -> Result<()> {
 
 #[sealed_test]
 fn ordered_package_bump() -> Result<()> {
+    // NOTE: this test is not actually testing the bump order
+    // it atempts to detect the order of bumps via `git tag --sort=-taggerdate`
+    // but both tags are created at the same time,
+    // thus git sorts tags lexicographically
+    // for a better test, see bump_order_respected_without_resolver
+
     // Arrange
     let mut settings = Settings {
         ignore_merge_commits: true,
@@ -352,17 +350,8 @@ fn ordered_package_bump() -> Result<()> {
 
     // Act
     cocogitto.create_monorepo_version(BumpOptions {
-        increment: IncrementCommand::Auto,
-        pre_release: None,
-        build: None,
-        hooks_config: None,
-        annotated: None,
-        dry_run: false,
-        skip_ci: false,
-        skip_ci_override: None,
-        skip_untracked: false,
-        disable_bump_commit: false,
-        include_packages: false,
+        target: Target::Monorepo { manual: false },
+        ..Default::default()
     })?;
 
     // Assert
@@ -859,10 +848,9 @@ fn bump_no_error_should_be_thrown_on_only_chore_docs_commit() -> Result<()> {
 
     cocogitto.clear_cache();
 
-    cocogitto.create_package_version(PackageBumpOptions {
-        package_name: "jenkins",
-        package: &jenkins(),
-        increment: IncrementCommand::AutoPackage("jenkins".to_owned()),
+    cocogitto.create_version(BumpOptions {
+        target: Target::package("jenkins"),
+        increment: IncrementCommand::Auto,
         ..Default::default()
     })?;
 
@@ -977,10 +965,9 @@ fn error_on_no_conventional_commits_found_for_package() -> Result<()> {
 
     let mut cocogitto = CocoGitto::get()?;
 
-    let first_result = cocogitto.create_package_version(PackageBumpOptions {
-        package_name: "jenkins",
-        package: &jenkins(),
-        increment: IncrementCommand::AutoPackage("jenkins".to_owned()),
+    let first_result = cocogitto.create_version(BumpOptions {
+        target: Target::package("jenkins"),
+        increment: IncrementCommand::Auto,
         ..Default::default()
     });
 
@@ -992,10 +979,9 @@ fn error_on_no_conventional_commits_found_for_package() -> Result<()> {
         git commit -m "some other jenkins stuff";
     )?;
 
-    let second_result = cocogitto.create_package_version(PackageBumpOptions {
-        package_name: "jenkins",
-        package: &jenkins(),
-        increment: IncrementCommand::AutoPackage("jenkins".to_owned()),
+    let second_result = cocogitto.create_version(BumpOptions {
+        target: Target::package("jenkins"),
+        increment: IncrementCommand::Auto,
         ..Default::default()
     });
 
@@ -1150,17 +1136,8 @@ fn bump_order_respected_without_resolver() -> Result<()> {
 
     // Act
     cocogitto.create_monorepo_version(BumpOptions {
-        increment: IncrementCommand::Auto,
-        pre_release: None,
-        build: None,
-        hooks_config: None,
-        annotated: None,
-        dry_run: false,
-        skip_ci: false,
-        skip_ci_override: None,
-        skip_untracked: true,
-        disable_bump_commit: false,
-        include_packages: false,
+        target: Target::Monorepo { manual: false },
+        ..Default::default()
     })?;
 
     // Assert: hooks executed in bump_order: beta(1), gamma(2), alpha(3)

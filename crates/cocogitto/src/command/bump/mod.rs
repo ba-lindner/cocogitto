@@ -1,6 +1,7 @@
 use crate::command::bump::prerelease::increment_prerelease;
 use crate::conventional::changelog::release::Release;
 use crate::conventional::commit::Commit;
+use crate::conventional::version::Increment;
 use crate::git::error::TagError;
 
 use crate::conventional::error::BumpError as ConvBumpError;
@@ -28,12 +29,13 @@ use std::fmt::Write;
 use std::process::exit;
 
 mod monorepo;
-mod package;
+// mod package;
 mod prerelease;
 mod standard;
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct BumpOptions<'a> {
+    pub target: Target,
     pub increment: IncrementCommand,
     pub pre_release: Option<PreCommand<'a>>,
     pub build: Option<&'a str>,
@@ -47,23 +49,8 @@ pub struct BumpOptions<'a> {
     pub include_packages: bool,
 }
 
-#[derive(Default)]
-pub struct PackageBumpOptions<'a> {
-    pub package_name: &'a str,
-    pub package: &'a MonoRepoPackage,
-    pub increment: IncrementCommand,
-    pub pre_release: Option<PreCommand<'a>>,
-    pub build: Option<&'a str>,
-    pub hooks_config: Option<&'a str>,
-    pub annotated: Option<String>,
-    pub dry_run: bool,
-    pub skip_ci: bool,
-    pub skip_ci_override: Option<String>,
-    pub skip_untracked: bool,
-    pub disable_bump_commit: bool,
-}
-
 struct BumpResult {
+    target: Target,
     current: Tag,
     next: Tag,
     had_commits: bool,
@@ -79,21 +66,20 @@ impl<'a> BumpOptions<'a> {
     fn get_new_version(
         &self,
         repository: &Repository,
-        package: Option<&str>,
         allow_empty: bool,
-        increment: Option<IncrementCommand>,
+        increment: Option<Increment>,
     ) -> Result<BumpResult> {
-        let current = match repository.get_latest_tag(package, false) {
+        let current = match repository.get_latest_tag(self.target.as_package(), false) {
             Ok(tag) => tag,
             Err(TagError::NoTag) => Tag::default(),
             Err(other) => bail!(other),
         };
         let current_prerelease = repository
-            .get_latest_tag(package, true)
+            .get_latest_tag(self.target.as_package(), true)
             .ok()
             .filter(|tag| *tag > current);
 
-        let increment = increment.unwrap_or_else(|| self.increment.clone());
+        let increment = self.increment.as_strategy(self.target, increment);
         let (mut next, had_commits) = match current.bump(increment, repository) {
             Ok(tag) => (tag, true),
             Err(ConvBumpError::NoCommitFound) if allow_empty => (current.strip_metadata(), false),
@@ -137,28 +123,11 @@ impl<'a> BumpOptions<'a> {
         }
 
         Ok(BumpResult {
+            target: self.target,
             current,
             next,
             had_commits,
         })
-    }
-}
-
-impl<'a> PackageBumpOptions<'a> {
-    fn common(&self) -> BumpOptions<'a> {
-        BumpOptions {
-            increment: self.increment.clone(),
-            pre_release: self.pre_release.clone(),
-            build: self.build,
-            hooks_config: self.hooks_config,
-            annotated: self.annotated.clone(),
-            dry_run: self.dry_run,
-            skip_ci: self.skip_ci,
-            skip_ci_override: self.skip_ci_override.clone(),
-            skip_untracked: self.skip_untracked,
-            disable_bump_commit: self.disable_bump_commit,
-            include_packages: false,
-        }
     }
 }
 

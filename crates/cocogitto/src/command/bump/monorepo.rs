@@ -135,23 +135,16 @@ impl CocoGitto {
             return Ok(());
         }
 
-        // Manual bump with `--include-packages` -> don't override increment command
-        let increment = if opts.increment != IncrementCommand::Auto {
-            opts.increment.clone()
-        } else if SETTINGS.generate_mono_repository_package_tags {
-            // Get the greatest package increment among public api packages
-            IncrementCommand::AutoMonoRepoGlobal(
-                bumps
-                    .iter()
-                    .filter(|bump| bump.public_api)
-                    .map(|bump| bump.increment)
-                    .max(),
-            )
-        } else {
-            IncrementCommand::Auto
-        };
-
-        let bump_res = opts.get_new_version(&self.repository, None, false, Some(increment))?;
+        let bump_res = opts.get_new_version(
+            &self.repository,
+            false,
+            bumps
+                .iter()
+                // yeah i think the test lib_tests::bump::auto_bump_global_only_ok is buggy
+                .filter(|bump| bump.public_api || !SETTINGS.generate_mono_repository_package_tags)
+                .map(|bump| bump.increment)
+                .max(),
+        )?;
 
         let tag = Tag::create(bump_res.next.version, None);
 
@@ -299,7 +292,7 @@ impl CocoGitto {
         // Get package bumps
         let bumps = self.get_current_packages()?;
 
-        let bump_res = opts.get_new_version(&self.repository, None, false, None)?;
+        let bump_res = opts.get_new_version(&self.repository, false, None)?;
 
         let tag = Tag::create(bump_res.next.version, None);
 
@@ -473,20 +466,17 @@ impl CocoGitto {
                 .then(a.1.bump_order.cmp(&b.1.bump_order))
         });
 
-        for (package_name, package) in packages {
-            let increment = if opts.increment != IncrementCommand::Auto {
-                opts.increment.clone()
-            } else {
-                IncrementCommand::AutoPackage(package_name.to_string())
+        for (name, package) in packages {
+            let opts = BumpOptions {
+                target: Target::Package { name, package },
+                ..opts.clone()
             };
-
-            let bump_res =
-                opts.get_new_version(&self.repository, Some(package_name), true, Some(increment))?;
+            let bump_res = opts.get_new_version(&self.repository, true, None)?;
             if bump_res.no_change() || !bump_res.had_commits {
                 continue;
             }
 
-            let tag = Tag::create(bump_res.next.version, Some(package_name.to_string()));
+            let tag = Tag::create(bump_res.next.version, Some(name.to_string()));
             let increment = tag.get_increment_from(&bump_res.current);
 
             if let Some(increment) = increment {
@@ -497,7 +487,7 @@ impl CocoGitto {
                 };
 
                 package_bumps.push(PackageBumpData {
-                    package_name: package_name.to_string(),
+                    package_name: name.to_string(),
                     package_path: package.path.to_string_lossy().to_string(),
                     public_api: package.public_api,
                     current: bump_res.current,

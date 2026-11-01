@@ -2,14 +2,11 @@ use std::cmp::Ordering;
 
 #[derive(Debug, PartialEq, Eq, Default, Clone)]
 pub enum IncrementCommand {
+    #[default]
+    Auto,
     Major,
     Minor,
     Patch,
-    #[default]
-    Auto,
-    NoBump,
-    AutoPackage(String),
-    AutoMonoRepoGlobal(Option<Increment>),
     Manual(String),
 }
 
@@ -27,17 +24,6 @@ pub enum PreCommand<'a> {
     Exact(&'a str),
     /// Automatically increment the pre-release version based on a pattern
     Auto(&'a str),
-}
-
-impl From<Increment> for IncrementCommand {
-    fn from(value: Increment) -> Self {
-        match value {
-            Increment::Major => IncrementCommand::Major,
-            Increment::Minor => IncrementCommand::Minor,
-            Increment::Patch => IncrementCommand::Patch,
-            Increment::NoBump => IncrementCommand::NoBump,
-        }
-    }
 }
 
 impl Ord for Increment {
