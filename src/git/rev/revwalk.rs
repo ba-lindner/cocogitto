@@ -15,47 +15,29 @@ impl Repository {
         package: &str,
     ) -> Result<CommitIter, Git2Error> {
         let mut commit_range = self.revwalk_pkg(pattern, Some(package))?;
-        let mut commits = vec![];
         let package = SETTINGS.packages.get(package).expect("package exists");
         let package_path_filter = PackagePathFilter::from_package(package);
+        let check_packages = |file: git2::DiffFile| {
+            file.path()
+                .is_some_and(|path| package_path_filter.is_match(path))
+        };
 
-        for (oid_of, commit) in commit_range.into_iter() {
-            let parent = commit.parent(0).ok().map(|commit| commit.id().to_string());
+        commit_range.try_retain::<Git2Error>(|_, commit| {
+            let parent_tree = commit
+                .parent(0)
+                .ok()
+                .map(|commit| commit.tree())
+                .transpose()?;
 
-            let parent_tree = self.tree_to_treeish(parent.as_ref())?;
+            let diff =
+                self.0
+                    .diff_tree_to_tree(parent_tree.as_ref(), Some(&commit.tree()?), None)?;
 
-            let current_tree = self
-                .tree_to_treeish(Some(&commit.id().to_string()))?
-                .expect("Failed to get commit tree");
+            Ok(diff
+                .deltas()
+                .any(|delta| check_packages(delta.old_file()) || check_packages(delta.new_file())))
+        })?;
 
-            let diff = match parent_tree {
-                None => self
-                    .0
-                    .diff_tree_to_tree(None, current_tree.as_tree(), None)?,
-                Some(parent_tree) => {
-                    self.0
-                        .diff_tree_to_tree(parent_tree.as_tree(), current_tree.as_tree(), None)?
-                }
-            };
-
-            for delta in diff.deltas() {
-                if let Some(old) = delta.old_file().path() {
-                    if package_path_filter.is_match(old) {
-                        commits.push((oid_of, commit));
-                        break;
-                    }
-                }
-
-                if let Some(new) = delta.new_file().path() {
-                    if package_path_filter.is_match(new) {
-                        commits.push((oid_of, commit));
-                        break;
-                    }
-                }
-            }
-        }
-
-        commit_range = CommitIter(commits);
         Ok(commit_range)
     }
 
@@ -64,51 +46,28 @@ impl Repository {
         pattern: &str,
     ) -> Result<CommitIter, Git2Error> {
         let mut commit_range = self.revwalk(pattern)?;
-        let mut commits = vec![];
-        let package_paths: Vec<_> = SETTINGS
-            .packages
-            .values()
-            .map(|package| &package.path)
-            .collect();
+        let pkg_filter = |file: git2::DiffFile| {
+            file.path().is_some_and(|path| {
+                SETTINGS
+                    .packages
+                    .values()
+                    .all(|pkg| !path.starts_with(&pkg.path))
+            })
+        };
 
-        for (oid_of, commit) in commit_range.into_iter() {
-            let parent = commit.parent(0);
+        commit_range.try_retain::<Git2Error>(|_, commit| {
+            let Ok(parent) = commit.parent(0) else {
+                return Ok(true);
+            };
 
-            // First commit is always included in monorepo global tag
-            if parent.is_err() {
-                commits.push((oid_of, commit));
-                continue;
-            }
+            let diff =
+                self.0
+                    .diff_tree_to_tree(Some(&parent.tree()?), Some(&commit.tree()?), None)?;
 
-            let parent = parent?.id().to_string();
-            let t1 = self
-                .tree_to_treeish(Some(&parent))?
-                .expect("Failed to get parent tree");
-
-            let t2 = self
-                .tree_to_treeish(Some(&commit.id().to_string()))?
-                .expect("Failed to get commit tree");
-
-            let diff = self.0.diff_tree_to_tree(t1.as_tree(), t2.as_tree(), None)?;
-
-            for delta in diff.deltas() {
-                if let Some(old) = delta.old_file().path() {
-                    if package_paths.iter().all(|path| !old.starts_with(path)) {
-                        commits.push((oid_of, commit));
-                        break;
-                    }
-                }
-
-                if let Some(new) = delta.new_file().path() {
-                    if package_paths.iter().all(|path| !new.starts_with(path)) {
-                        commits.push((oid_of, commit));
-                        break;
-                    }
-                }
-            }
-        }
-
-        commit_range = CommitIter(commits);
+            Ok(diff
+                .deltas()
+                .any(|delta| pkg_filter(delta.old_file()) || pkg_filter(delta.new_file())))
+        })?;
         Ok(commit_range)
     }
 

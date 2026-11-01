@@ -55,18 +55,15 @@ fn build_cache(
 }
 
 impl Repository {
-    fn resolve_tag(&self, tag: &str) -> Result<Tag, TagError> {
-        self.0
-            .resolve_reference_from_short_name(tag)
-            .map_err(|err| TagError::not_found(tag, err))
-            .map(|reference| reference.target().unwrap())
-            .map(|commit_oid| {
-                if let Ok(annotated_tag) = self.0.find_tag(commit_oid) {
-                    Tag::from_str(tag, Some(commit_oid), Some(annotated_tag.target_id()))
-                } else {
-                    Tag::from_str(tag, Some(commit_oid), None)
-                }
-            })?
+    fn resolve_tag(&self, tag_name: &str) -> Result<Tag, TagError> {
+        let tag_oid = self
+            .0
+            .resolve_reference_from_short_name(tag_name)
+            .map_err(|err| TagError::not_found(tag_name, err))?
+            .target()
+            .expect("tags should always have a direct target");
+        let target = self.0.find_tag(tag_oid).ok().map(|tag| tag.target_id());
+        Tag::from_str(tag_name, Some(tag_oid), target)
     }
 }
 

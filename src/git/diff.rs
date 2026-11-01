@@ -1,5 +1,5 @@
 use crate::git::repository::Repository;
-use git2::{Diff, DiffOptions, Object};
+use git2::{Diff, DiffOptions};
 
 impl Repository {
     pub(crate) fn get_diff(&self, include_untracked: bool) -> Option<Diff> {
@@ -9,7 +9,7 @@ impl Repository {
         let diff = match self.get_head() {
             Some(head) => self
                 .0
-                .diff_tree_to_index(head.as_tree(), None, Some(&mut options)),
+                .diff_tree_to_index(Some(&head), None, Some(&mut options)),
             None => self
                 .0
                 .diff_tree_to_workdir_with_index(None, Some(&mut options)),
@@ -27,10 +27,8 @@ impl Repository {
         }
     }
 
-    fn get_head(&self) -> Option<Object> {
-        self.tree_to_treeish(Some(&"HEAD".to_string()))
-            .ok()
-            .flatten()
+    fn get_head(&self) -> Option<git2::Tree> {
+        self.0.revparse_single("HEAD").ok()?.peel_to_tree().ok()
     }
 }
 
